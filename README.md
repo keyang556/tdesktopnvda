@@ -1,33 +1,50 @@
 # Telegram Desktop Accessibility for NVDA
 
-Telegram Desktop Accessibility is an NVDA add-on for improving Telegram Desktop accessibility. It focuses on keeping Telegram Desktop readable when broken UI Automation data would otherwise stop NVDA from announcing focused controls.
+## Overview
 
-## Languages
+Telegram Desktop Accessibility is an NVDA add-on for Telegram Desktop on Windows. It helps NVDA keep reading Telegram controls when Telegram exposes information that can otherwise stop focus announcements.
 
-- English: `README.md`
-- Traditional Chinese: `addon/doc/zh_TW/readme.md`
-- Simplified Chinese: `addon/doc/zh_CN/readme.md`
+This add-on is intentionally small. It does not add new Telegram features, change your messages, or send any account data anywhere. Its main job is to make affected Telegram screens easier to read with NVDA.
 
-The add-on manifest uses English as the default language and includes Traditional Chinese and Simplified Chinese localized metadata through gettext catalogs under `addon/locale/`.
+> [!IMPORTANT]
+> This add-on improves the Telegram Desktop screens it knows how to recognize. If Telegram changes its interface, some behavior may change until the add-on is updated.
 
-## Fixed First
+## Features
 
-Telegram Desktop 6.8.x exposes the chat list as UIA list items, but its
-`SelectionItemPattern.currentSelectionContainer` can raise a COM error while
-NVDA is preparing focus speech. When that happens, NVDA aborts the focus event
-and chat rows are not read.
+* Improves focus announcements in the Telegram chat list.
+* Helps NVDA read the country or region list shown while signing in with a phone number.
+* Keeps Telegram's own item names intact, so chat and country names are still spoken as Telegram provides them.
+* Works quietly in the background. There are no extra add-on commands to remember.
 
-This add-on adds Telegram-specific appModule overlays for affected list rows. It
-keeps Telegram's existing accessible row names intact and returns no selection
-container for those rows, avoiding the failing UIA query that blocks speech.
-The same protection is applied to the phone number country selection dialog
-introduced by Telegram Desktop's `CountrySelectBox`.
+## Tips
 
-## Author
+* Keep Telegram Desktop in a normal, visible window when navigating with NVDA.
+* If the chat list stops reading after a Telegram update, restart Telegram Desktop and NVDA first.
+* If the problem continues, please report it with your Telegram Desktop version, NVDA version, and the screen where speech stopped.
 
-Ken Chang <lindsay714322@gmail.com>
+## What This Add-On Fixes
 
-## Build
+Some Telegram Desktop 6.8.x screens can make NVDA stop reading a focused row. The most visible example is the chat list: you move through chats, but NVDA may stay silent.
+
+This add-on avoids the problematic Telegram information on the affected rows so NVDA can continue speaking the focused item. The same protection is also used for the phone number country or region selection dialog.
+
+## Keyboard Shortcuts
+
+This add-on does not add its own keyboard shortcuts. Use Telegram Desktop's built-in shortcuts and normal NVDA navigation commands.
+
+## Community and Support
+
+* **Official Telegram channel**: [tdesktopnvda](https://t.me/tdesktopnvda). Follow the channel for release notes and project updates.
+* **Telegram user group**: [tdesktopnvda_group](https://t.me/tdesktopnvda_group). Join the group to ask questions, share usage feedback, or discuss accessibility issues.
+* **Source code and issue tracking**: [keyang556/tdesktopnvda](https://github.com/keyang556/tdesktopnvda). If you find a bug or have a feature suggestion, please open an Issue. If you would like to contribute code, documentation, or translations, Pull Requests are welcome.
+* **Developer contact**: Ken Chang <lindsay714322@gmail.com>
+
+## Supported Versions
+
+* Telegram Desktop for Windows, especially 6.8.x and versions with the same chat list reading issue.
+* NVDA 2024.1 or later.
+
+## Build From Source
 
 From this repository:
 
@@ -35,5 +52,4 @@ From this repository:
 uv run scons
 ```
 
-The generated `.nvda-addon` package can then be installed through NVDA's add-on
-manager.
+The generated `.nvda-addon` package can be installed through NVDA's add-on manager.
