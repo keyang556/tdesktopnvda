@@ -90,8 +90,37 @@ class TelegramAppModuleTests(unittest.TestCase):
 
 		self.assertIs(classes[0], self.module.TelegramChatListItem)
 
+	def test_country_select_list_item_is_detected_by_parent_list_name(self):
+		parent = _FakeUIA(role=_Role.LIST, name="Select Country")
+		item = _FakeUIA(role=_Role.LISTITEM, name="United States, +1", parent=parent)
+
+		self.assertTrue(self.module.isTelegramCountrySelectListItem(item))
+
+	def test_country_select_overlay_is_inserted(self):
+		parent = _FakeUIA(role=_Role.LIST, name="Select Country")
+		item = _FakeUIA(role=_Role.LISTITEM, name="Taiwan, +886", parent=parent)
+		classes = [self.module.ListItem]
+
+		self.module.AppModule().chooseNVDAObjectOverlayClasses(item, classes)
+
+		self.assertIs(classes[0], self.module.TelegramCountrySelectListItem)
+
+	def test_country_select_overlay_is_not_inserted_for_other_lists(self):
+		parent = _FakeUIA(role=_Role.LIST, name="Settings")
+		item = _FakeUIA(role=_Role.LISTITEM, name="Taiwan, +886", parent=parent)
+		classes = [self.module.ListItem]
+
+		self.module.AppModule().chooseNVDAObjectOverlayClasses(item, classes)
+
+		self.assertIs(classes[0], self.module.ListItem)
+
 	def test_overlay_disables_selection_container_lookup(self):
 		row = self.module.TelegramChatListItem(role=_Role.LISTITEM, name="Alice")
+
+		self.assertIsNone(row._get_selectionContainer())
+
+	def test_country_select_overlay_disables_selection_container_lookup(self):
+		row = self.module.TelegramCountrySelectListItem(role=_Role.LISTITEM, name="Taiwan, +886")
 
 		self.assertIsNone(row._get_selectionContainer())
 

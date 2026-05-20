@@ -6,17 +6,17 @@ from site_scons.site_tools.NVDATool.utils import _
 
 addon_info = AddonInfo(
 	addon_name="telegramDesktop",
-	addon_summary=_("Telegram Desktop accessibility enhancements"),
+	addon_summary=_("Telegram Desktop Accessibility"),
 	addon_description=_(
-		"""Improves NVDA support for Telegram Desktop.
+		"""Improves Telegram Desktop accessibility for NVDA users.
 
-This release fixes chat list focus announcements when Telegram exposes a broken UIA selection container."""
+This release fixes chat list focus announcements when Telegram exposes a broken UIA selection container, and applies the same protection to the phone number country selection dialog."""
 	),
 	addon_version="0.1.0",
 	addon_changelog=_(
 		"""Fixed chat list item focus speech in Telegram Desktop 6.8.x by avoiding a failing UIA selection container query."""
 	),
-	addon_author="chang",
+	addon_author="Ken Chang <lindsay714322@gmail.com>",
 	addon_url=None,
 	addon_sourceURL=None,
 	addon_docFileName="readme.html",
