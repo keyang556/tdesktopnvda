@@ -10,11 +10,11 @@ addon_info = AddonInfo(
 	addon_description=_(
 		"""Improves Telegram Desktop accessibility for NVDA users.
 
-This release fixes chat list focus announcements when Telegram exposes a broken UIA selection container, and applies the same protection to the phone number country selection dialog."""
+This release fixes Tab focus entry and focus announcements for Telegram chat and message lists when Telegram exposes non-focusable UIA list containers or broken selection containers, and applies the same row protection to the phone number country selection dialog."""
 	),
-	addon_version="0.1.0",
+	addon_version="0.1.1",
 	addon_changelog=_(
-		"""Fixed chat list item focus speech in Telegram Desktop 6.8.x by avoiding a failing UIA selection container query."""
+		"""Fixed chat and message list focus speech in Telegram Desktop 6.8.3 and later by restoring focusable UIA list containers and avoiding failing selection container queries."""
 	),
 	addon_author="Ken Chang <lindsay714322@gmail.com>",
 	addon_url=None,

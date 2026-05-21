@@ -11,9 +11,9 @@ This add-on is intentionally small. It does not add new Telegram features, chang
 
 ## Features
 
-* Improves focus announcements in the Telegram chat list.
+* Improves Tab focus entry and focus announcements in Telegram chat and message lists.
 * Helps NVDA read the country or region list shown while signing in with a phone number.
-* Keeps Telegram's own item names intact, so chat and country names are still spoken as Telegram provides them.
+* Keeps Telegram's own item names intact, so chat, message, and country names are still spoken as Telegram provides them.
 * Works quietly in the background. There are no extra add-on commands to remember.
 
 ## Tips
@@ -24,9 +24,9 @@ This add-on is intentionally small. It does not add new Telegram features, chang
 
 ## What This Add-On Fixes
 
-Some Telegram Desktop 6.8.x screens can make NVDA stop reading a focused row. The most visible example is the chat list: you move through chats, but NVDA may stay silent.
+Some Telegram Desktop 6.8.3 and later screens can make NVDA stop reading a focused row or miss the row when Tab lands on a list container. The most visible examples are the chat list and message list: you move through items, but NVDA may stay silent.
 
-This add-on avoids the problematic Telegram information on the affected rows so NVDA can continue speaking the focused item. The same protection is also used for the phone number country or region selection dialog.
+This add-on restores NVDA-side focusability for the affected Telegram list containers and avoids problematic Telegram selection information on affected rows so NVDA can continue speaking the focused item. The same row protection is also used for the phone number country or region selection dialog.
 
 ## Keyboard Shortcuts
 
@@ -41,7 +41,7 @@ This add-on does not add its own keyboard shortcuts. Use Telegram Desktop's buil
 
 ## Supported Versions
 
-* Telegram Desktop for Windows, especially 6.8.x and versions with the same chat list reading issue.
+* Telegram Desktop for Windows 6.8.3 and later, especially versions with the same list focus or reading issue.
 * NVDA 2024.1 or later.
 
 ## Build From Source
