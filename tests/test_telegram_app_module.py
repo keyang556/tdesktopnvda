@@ -137,10 +137,10 @@ class TelegramAppModuleTests(unittest.TestCase):
 
 		self.assertFalse(self.module.isTelegramChatListForwardTabEntryPoint(obj))
 
-	def test_message_composer_is_detected(self):
-		obj = _FakeUIA(role=_Role.EDITABLETEXT, name="Write a message...")
+	def test_editable_text_is_detected_without_using_placeholder_text(self):
+		obj = _FakeUIA(role=_Role.EDITABLETEXT, name="\u043d\u043e\u0432\u043e\u0435 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435")
 
-		self.assertTrue(self.module.isTelegramMessageComposer(obj))
+		self.assertTrue(self.module.isTelegramEditableText(obj))
 
 	def test_tab_from_chat_list_entry_button_sends_shift_tab(self):
 		button = _FakeUIA(role=_Role.BUTTON, name="\u7de8\u8f2f")
@@ -168,9 +168,9 @@ class TelegramAppModuleTests(unittest.TestCase):
 		self.assertTrue(gesture.sent)
 		self.assertEqual(self.module._testSentKeyboardGestures, [])
 
-	def test_tab_from_message_composer_edit_button_passes_through(self):
-		composer = _FakeUIA(role=_Role.EDITABLETEXT, name="Write a message...")
-		button = _FakeUIA(role=_Role.BUTTON, name="Edit")
+	def test_tab_from_localized_editable_text_to_edit_button_passes_through(self):
+		composer = _FakeUIA(role=_Role.EDITABLETEXT, name="\u8f38\u5165\u8a0a\u606f")
+		button = _FakeUIA(role=_Role.BUTTON, name="\u7de8\u8f2f")
 		appModule = self.module.AppModule()
 		appModule.event_gainFocus(composer, lambda: None)
 		appModule.event_gainFocus(button, lambda: None)
