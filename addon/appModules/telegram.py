@@ -25,6 +25,19 @@ _CHAT_LIST_FORWARD_TAB_ENTRY_BUTTON_NAMES = frozenset(
 	}
 )
 
+_MESSAGE_COMPOSER_NAMES = frozenset(
+	{
+		"write a message",
+		"write a message...",
+		"\u043d\u0430\u043f\u0438\u0441\u0430\u0442\u044c \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435",
+		"\u043d\u0430\u043f\u0438\u0441\u0430\u0442\u044c \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435...",
+		"\u8f38\u5165\u8a0a\u606f",
+		"\u8f38\u5165\u8a0a\u606f...",
+		"\u8f93\u5165\u6d88\u606f",
+		"\u8f93\u5165\u6d88\u606f...",
+	}
+)
+
 _CHAT_LIST_CONTAINER_NAMES = frozenset(
 	{
 		"chats",
@@ -57,6 +70,8 @@ _COUNTRY_SELECT_CONTAINER_NAMES = frozenset(
 	}
 )
 
+_NAME_IGNORED_CHARACTERS = str.maketrans("", "", "\u200e\u200f\u2066\u2067\u2068\u2069")
+
 
 def _safeRole(obj: object) -> controlTypes.Role | None:
 	try:
@@ -77,7 +92,7 @@ def _normalizedName(obj: object) -> str:
 		name = obj.name
 	except (AttributeError, COMError, RuntimeError):
 		return ""
-	return (name or "").strip().casefold()
+	return (name or "").translate(_NAME_IGNORED_CHARACTERS).strip().casefold()
 
 
 def _sendKeyboardGesture(name: str) -> bool:
@@ -116,6 +131,17 @@ def isTelegramChatListForwardTabEntryPoint(obj: object) -> bool:
 		isinstance(obj, UIA)
 		and _safeRole(obj) == controlTypes.Role.BUTTON
 		and _normalizedName(obj) in _CHAT_LIST_FORWARD_TAB_ENTRY_BUTTON_NAMES
+	)
+
+
+def isTelegramMessageComposer(obj: object) -> bool:
+	"""Return True for Telegram's chat message composer edit field."""
+	editableTextRole = getattr(controlTypes.Role, "EDITABLETEXT", None)
+	return (
+		isinstance(obj, UIA)
+		and editableTextRole is not None
+		and _safeRole(obj) == editableTextRole
+		and _normalizedName(obj) in _MESSAGE_COMPOSER_NAMES
 	)
 
 
@@ -189,7 +215,9 @@ class TelegramCountrySelectListItem(TelegramSelectionContainerSafeListItem):
 
 class AppModule(appModuleHandler.AppModule):
 	_chatListTabEntryReachedFromChatList = False
+	_chatListTabEntryReachedFromMessageComposer = False
 	_lastFocusWasChatList = False
+	_lastFocusWasMessageComposer = False
 
 	def chooseNVDAObjectOverlayClasses(self, obj, clsList):
 		if isTelegramChatList(obj):
@@ -207,10 +235,16 @@ class AppModule(appModuleHandler.AppModule):
 
 	def event_gainFocus(self, obj, nextHandler):
 		lastFocusWasChatList = getattr(self, "_lastFocusWasChatList", False)
+		lastFocusWasMessageComposer = getattr(self, "_lastFocusWasMessageComposer", False)
+		isChatListEntryPoint = isTelegramChatListForwardTabEntryPoint(obj)
 		self._chatListTabEntryReachedFromChatList = (
-			lastFocusWasChatList and isTelegramChatListForwardTabEntryPoint(obj)
+			lastFocusWasChatList and isChatListEntryPoint
+		)
+		self._chatListTabEntryReachedFromMessageComposer = (
+			lastFocusWasMessageComposer and isChatListEntryPoint
 		)
 		self._lastFocusWasChatList = isTelegramChatList(obj) or isTelegramChatListItem(obj)
+		self._lastFocusWasMessageComposer = isTelegramMessageComposer(obj)
 		nextHandler()
 
 	def script_tab(self, gesture):
@@ -220,11 +254,17 @@ class AppModule(appModuleHandler.AppModule):
 			focus = None
 
 		if isTelegramChatListForwardTabEntryPoint(focus):
+			if getattr(self, "_chatListTabEntryReachedFromMessageComposer", False):
+				self._chatListTabEntryReachedFromChatList = False
+				self._chatListTabEntryReachedFromMessageComposer = False
+				gesture.send()
+				return
 			if not getattr(self, "_chatListTabEntryReachedFromChatList", False):
 				# Telegram 6.8.3 skips the chat list in forward Tab order, while Shift+Tab reaches it.
 				if _sendKeyboardGesture("shift+tab"):
 					return
 			self._chatListTabEntryReachedFromChatList = False
+			self._chatListTabEntryReachedFromMessageComposer = False
 
 		gesture.send()
 

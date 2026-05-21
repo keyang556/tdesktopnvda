@@ -14,6 +14,7 @@ class _Role:
 	LIST = "list"
 	LISTITEM = "listItem"
 	BUTTON = "button"
+	EDITABLETEXT = "editableText"
 
 
 class _State:
@@ -136,6 +137,11 @@ class TelegramAppModuleTests(unittest.TestCase):
 
 		self.assertFalse(self.module.isTelegramChatListForwardTabEntryPoint(obj))
 
+	def test_message_composer_is_detected(self):
+		obj = _FakeUIA(role=_Role.EDITABLETEXT, name="Write a message...")
+
+		self.assertTrue(self.module.isTelegramMessageComposer(obj))
+
 	def test_tab_from_chat_list_entry_button_sends_shift_tab(self):
 		button = _FakeUIA(role=_Role.BUTTON, name="\u7de8\u8f2f")
 		appModule = self.module.AppModule()
@@ -153,6 +159,20 @@ class TelegramAppModuleTests(unittest.TestCase):
 		button = _FakeUIA(role=_Role.BUTTON, name="\u7de8\u8f2f")
 		appModule = self.module.AppModule()
 		appModule.event_gainFocus(chatList, lambda: None)
+		appModule.event_gainFocus(button, lambda: None)
+		self.module._testApi.focusObject = button
+		gesture = _PassthroughGesture()
+
+		appModule.script_tab(gesture)
+
+		self.assertTrue(gesture.sent)
+		self.assertEqual(self.module._testSentKeyboardGestures, [])
+
+	def test_tab_from_message_composer_edit_button_passes_through(self):
+		composer = _FakeUIA(role=_Role.EDITABLETEXT, name="Write a message...")
+		button = _FakeUIA(role=_Role.BUTTON, name="Edit")
+		appModule = self.module.AppModule()
+		appModule.event_gainFocus(composer, lambda: None)
 		appModule.event_gainFocus(button, lambda: None)
 		self.module._testApi.focusObject = button
 		gesture = _PassthroughGesture()
