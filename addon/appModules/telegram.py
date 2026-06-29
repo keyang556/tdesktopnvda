@@ -1,5 +1,5 @@
 # A part of Telegram Desktop Accessibility for NVDA
-# Copyright (C) 2026 chang
+# Copyright (C) 2026 Ken Chang
 # This file is covered by the GNU General Public License.
 # See the file COPYING.txt for more details.
 
