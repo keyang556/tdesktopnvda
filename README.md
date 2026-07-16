@@ -2,46 +2,139 @@
 
 ## Overview
 
-Telegram Desktop Accessibility is an NVDA add-on for Telegram Desktop on Windows. It helps NVDA keep reading Telegram controls when Telegram exposes information that can otherwise stop focus announcements.
-
-This add-on is intentionally small. It does not add new Telegram features, change your messages, or send any account data anywhere. Its main job is to make affected Telegram screens easier to read with NVDA.
-
-> [!IMPORTANT]
-> This add-on improves the Telegram Desktop screens it knows how to recognize. If Telegram changes its interface, some behavior may change until the add-on is updated.
+Telegram Desktop Accessibility is an NVDA add-on for Telegram Desktop on Windows. It adds two direct navigation commands while leaving Telegram's native accessibility behavior and accessible names unchanged.
 
 ## Features
 
-* Improves Tab focus entry and focus announcements in Telegram chat and message lists.
-* Helps NVDA read the country or region list shown while signing in with a phone number.
-* Keeps Telegram's own item names intact, so chat, message, and country names are still spoken as Telegram provides them.
-* Works quietly in the background. There are no extra add-on commands to remember.
+* `Alt+1` moves focus to the selected chat in the chat list, or to the first chat when no chat is selected.
+* `Alt+M` opens Telegram's main menu.
+* Chat detection uses Telegram's stable UIA class information rather than a translated control name, so the commands do not depend on Telegram's interface language.
+* Telegram continues to provide the names of chats, messages, buttons, and list items. The add-on does not replace or rewrite them.
 
-## Tips
+## Usage
 
-* Keep Telegram Desktop in a normal, visible window when navigating with NVDA.
-* If the chat list stops reading after a Telegram update, restart Telegram Desktop and NVDA first.
-* If the problem continues, please report it with your Telegram Desktop version, NVDA version, and the screen where speech stopped.
+Install the add-on, restart NVDA when prompted, and use the two add-on shortcuts from the main Telegram window. No configuration is required.
 
-## What This Add-On Fixes
+If `Alt+1` cannot find a chat list or the list is empty, NVDA reports that condition. If `Alt+M` is unavailable on the current Telegram screen, NVDA reports that the main menu is not available.
 
-Some Telegram Desktop 6.8.3 and later screens can make NVDA stop reading a focused row or miss the row when Tab lands on a list container. The most visible examples are the chat list and message list: you move through items, but NVDA may stay silent.
+## Implementation
 
-This add-on restores NVDA-side focusability for the affected Telegram list containers and avoids problematic Telegram selection information on affected rows so NVDA can continue speaking the focused item. The same row protection is also used for the phone number country or region selection dialog.
+Telegram Desktop's patched Qt accessibility provider exposes RTTI-based UIA class names. The add-on identifies the chat list as `Dialogs::InnerWidget`, allowing it to work independently of the localized accessible name. The main menu command locates Telegram's native menu button inside `Dialogs::Widget` and invokes its existing action.
 
 ## Keyboard Shortcuts
 
-This add-on does not add its own keyboard shortcuts. Use Telegram Desktop's built-in shortcuts and normal NVDA navigation commands.
+### Add-on
+
+| Shortcut | Provided by | Function |
+|---|---|---|
+| **Alt+1** | Add-on | Move focus to the chat list |
+| **Alt+M** | Add-on | Open the main menu |
+
+### Chats
+
+| Shortcut | Provided by | Function |
+|---|---|---|
+| **Up / Down / Page Up / Page Down** | Telegram Desktop | Navigate within a chat |
+| **Shift+Scroll** | Telegram Desktop | Speed up in-chat navigation |
+| **Up / Left / Right / Down** | Telegram Desktop | Navigate suggested stickers |
+| **Left / Right** | Telegram Desktop | Navigate suggested emoji |
+| **Ctrl+Tab / Ctrl+Page Down / Alt+Down** | Telegram Desktop | Move to the chat below |
+| **Ctrl+Shift+Tab / Ctrl+Page Up / Alt+Up** | Telegram Desktop | Move to the chat above |
+| **Esc** | Telegram Desktop | Exit, go back, or cancel the current action |
+| **Ctrl+O** | Telegram Desktop | Send a file |
+
+### Folders
+
+| Shortcut | Provided by | Function |
+|---|---|---|
+| **Ctrl+Shift+Down** | Telegram Desktop | Move to the folder below |
+| **Ctrl+Shift+Up** | Telegram Desktop | Move to the folder above |
+| **Ctrl+1 through Ctrl+7** | Telegram Desktop | Jump directly to a folder |
+| **Ctrl+8** | Telegram Desktop | Jump to the last folder |
+
+### Messages
+
+| Shortcut | Provided by | Function |
+|---|---|---|
+| **Ctrl+Up / Ctrl+Down** | Telegram Desktop | Reply to a message |
+| **Ctrl+Down / Esc** | Telegram Desktop | Cancel a reply |
+| **Up** | Telegram Desktop | Edit the last message sent |
+| **Delete** | Telegram Desktop | Delete the currently selected message |
+| **Ctrl+Numpad Plus / Ctrl+Numpad Minus** | Telegram Desktop | Zoom an image or video in or out |
+| **Ctrl+Click the name** | Telegram Desktop | Open a bot profile from an inline message |
+
+### Search
+
+| Shortcut | Provided by | Function |
+|---|---|---|
+| **Ctrl+F** | Telegram Desktop | Search the selected chat |
+| **Esc** | Telegram Desktop | Exit search |
+| **Ctrl+J** | Telegram Desktop | Search for a contact |
+
+### Quick Share Panel
+
+| Shortcut | Provided by | Function |
+|---|---|---|
+| **Up / Down** | Telegram Desktop | Navigate the panel |
+| **Enter** | Telegram Desktop | Select a chat |
+| **Backspace / Delete** | Telegram Desktop | Remove a chat |
+| **Ctrl+Enter** | Telegram Desktop | Send the message |
+
+### Jump To
+
+| Shortcut | Provided by | Function |
+|---|---|---|
+| **Alt+Enter** | Telegram Desktop | Jump to the bottom of the chat or scroll the chat list to the top |
+| **Ctrl+0** | Telegram Desktop | Open Saved Messages |
+| **Ctrl+1 through Ctrl+5** | Telegram Desktop | Jump directly to a pinned chat when there are no folders |
+| **Ctrl+9** | Telegram Desktop | Open Archived Chats |
+
+### Window
+
+| Shortcut | Provided by | Function |
+|---|---|---|
+| **Ctrl+W / Alt+F4** | Telegram Desktop | Minimize to the system tray |
+| **Ctrl+Q** | Telegram Desktop | Quit Telegram |
+| **Ctrl+L** | Telegram Desktop | Lock Telegram |
+| **Ctrl+M** | Telegram Desktop | Minimize Telegram |
+
+### Selected Text
+
+| Shortcut | Provided by | Function |
+|---|---|---|
+| **Ctrl+B** | Telegram Desktop | Bold |
+| **Ctrl+I** | Telegram Desktop | Italic |
+| **Ctrl+K** | Telegram Desktop | Create a link |
+| **Ctrl+U** | Telegram Desktop | Underline |
+| **Ctrl+Shift+M** | Telegram Desktop | Monospace |
+| **Ctrl+Shift+N** | Telegram Desktop | Remove formatting / plain text |
+| **Ctrl+Shift+P** | Telegram Desktop | Spoiler |
+| **Ctrl+Shift+X** | Telegram Desktop | Strikethrough |
+| **Ctrl+Shift+Period** | Telegram Desktop | Quote |
+
+### Mouse Shortcuts
+
+| Shortcut | Provided by | Function |
+|---|---|---|
+| **Double-click a message** | Telegram Desktop | Reply |
+| **Drag outside the messages** | Telegram Desktop | Select messages |
+| **Hover over the timestamp** | Telegram Desktop | Show message information |
+| **Hover over a poll percentage** | Telegram Desktop | Show the number of votes |
+| **Drag a message to a chat in the list** | Telegram Desktop | Forward the message to that chat |
+| **Back** | Telegram Desktop | Exit Archived Chats |
+| **Upload a picture and click its preview** | Telegram Desktop | Edit media |
+| **Right-click the Send button** | Telegram Desktop | Send silently or schedule a message |
 
 ## Community and Support
 
-* **Official Telegram channel**: [tdesktopnvda](https://t.me/tdesktopnvda). Follow the channel for release notes and project updates.
-* **Telegram user group**: [tdesktopnvda_group](https://t.me/tdesktopnvda_group). Join the group to ask questions, share usage feedback, or discuss accessibility issues.
-* **Source code and issue tracking**: [keyang556/tdesktopnvda](https://github.com/keyang556/tdesktopnvda). If you find a bug or have a feature suggestion, please open an Issue. If you would like to contribute code, documentation, or translations, Pull Requests are welcome.
+* **Official Telegram channel**: [tdesktopnvda](https://t.me/tdesktopnvda)
+* **Telegram user group**: [tdesktopnvda_group](https://t.me/tdesktopnvda_group)
+* **Source code and issue tracking**: [keyang556/tdesktopnvda](https://github.com/keyang556/tdesktopnvda)
 * **Developer contact**: Ken Chang <lindsay714322@gmail.com>
 
 ## Supported Versions
 
-* Telegram Desktop for Windows 6.8.3 and later, especially versions with the same list focus or reading issue.
+* Telegram Desktop for Windows 7.0.1 or later.
 * NVDA 2024.1 or later.
 
 ## Build From Source
@@ -52,4 +145,4 @@ From this repository:
 uv run scons
 ```
 
-The generated `.nvda-addon` package can be installed through NVDA's add-on manager.
+The generated `.nvda-addon` package can be installed through NVDA's Add-on Store.

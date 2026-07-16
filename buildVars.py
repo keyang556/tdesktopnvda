@@ -10,11 +10,11 @@ addon_info = AddonInfo(
 	addon_description=_(
 		"""Improves Telegram Desktop accessibility for NVDA users.
 
-This release fixes Tab focus entry and focus announcements for Telegram chat and message lists when Telegram exposes non-focusable UIA list containers or broken selection containers, and applies the same row protection to the phone number country selection dialog."""
+Adds Alt+1 to move focus to the chat list and Alt+M to open Telegram's main menu. The add-on uses Telegram's stable UIA class information and leaves Telegram's native accessible names unchanged."""
 	),
-	addon_version="0.1.1",
+	addon_version="0.1.3",
 	addon_changelog=_(
-		"""Fixed chat and message list focus speech in Telegram Desktop 6.8.3 and later by restoring focusable UIA list containers and avoiding failing selection container queries."""
+		"""Fixed Alt+M in Telegram's folder-sidebar layout and fixed an NVDA freeze by replacing recursive object-tree traversal with provider-side UIA queries."""
 	),
 	addon_author="Ken Chang <lindsay714322@gmail.com>",
 	addon_url=None,
@@ -37,6 +37,6 @@ excludedFiles: list[str] = [
 	"**/*.pyo",
 ]
 baseLanguage: str = "en"
-markdownExtensions: list[str] = []
+markdownExtensions: list[str] = ["tables"]
 brailleTables: BrailleTables = {}
 symbolDictionaries: SymbolDictionaries = {}
