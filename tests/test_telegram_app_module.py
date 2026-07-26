@@ -164,6 +164,9 @@ class _FakeUIA:
 
 
 def _loadTelegramModule():
+	addonHandler = types.ModuleType("addonHandler")
+	addonHandler.initTranslation = lambda: None
+
 	api = types.ModuleType("api")
 	api.focusObject = None
 	api.foregroundObject = None
@@ -181,10 +184,11 @@ def _loadTelegramModule():
 	uiaModule = types.ModuleType("NVDAObjects.UIA")
 	uiaModule.UIA = _FakeUIA
 
-	def fakeScript(*, description, gesture):
+	def fakeScript(*, description, gesture=None, gestures=None):
 		def decorator(function):
 			function.__doc__ = description
 			function.gesture = gesture
+			function.gestures = gestures
 			return function
 
 		return decorator
@@ -217,15 +221,75 @@ def _loadTelegramModule():
 		baseCacheRequest=object(),
 	)
 
+	comInterfaces = types.ModuleType("comInterfaces")
+	uiaClient = types.ModuleType("comInterfaces.UIAutomationClient")
+	uiaClient.IUIAutomationInvokePattern = object
+	uiaClient.tagPOINT = lambda x, y: types.SimpleNamespace(x=x, y=y)
+
+	contentRecog = types.ModuleType("contentRecog")
+	contentRecog.RecogImageInfo = type("RecogImageInfo", (), {})
+	contentRecog.RecognitionResult = object
+	uwpOcr = types.ModuleType("contentRecog.uwpOcr")
+	uwpOcr.UwpOcr = type("UwpOcr", (), {})
+
+	core = types.ModuleType("core")
+	core.calls = []
+	core.callLater = lambda delay, function, *args: core.calls.append((delay, function, args))
+
+	displayModel = types.ModuleType("displayModel")
+
+	class _UnavailableDisplayModelTextInfo:
+		def __init__(self, *args, **kwargs):
+			raise RuntimeError("display model unavailable in isolated tests")
+
+	displayModel.DisplayModelTextInfo = _UnavailableDisplayModelTextInfo
+
+	keyboardHandler = types.ModuleType("keyboardHandler")
+	keyboardHandler.KeyboardInputGesture = type("KeyboardInputGesture", (), {})
+
+	locationHelper = types.ModuleType("locationHelper")
+
+	class _RectLTRB:
+		def __init__(self, left, top, right, bottom):
+			self.left = left
+			self.top = top
+			self.right = right
+			self.bottom = bottom
+
+	locationHelper.RectLTRB = _RectLTRB
+
+	queueHandler = types.ModuleType("queueHandler")
+	queueHandler.eventQueue = object()
+	queueHandler.queueFunction = lambda queue, function, *args: function(*args)
+
+	screenBitmap = types.ModuleType("screenBitmap")
+	screenBitmap.ScreenBitmap = type("ScreenBitmap", (), {})
+
+	winUser = types.ModuleType("winUser")
+	winUser.VK_MENU = 0x12
+	winUser.getAsyncKeyState = lambda key: 0
+
 	stubs = {
+		"addonHandler": addonHandler,
 		"api": api,
 		"appModuleHandler": appModuleHandler,
+		"comInterfaces": comInterfaces,
+		"comInterfaces.UIAutomationClient": uiaClient,
 		"controlTypes": controlTypes,
+		"contentRecog": contentRecog,
+		"contentRecog.uwpOcr": uwpOcr,
+		"core": core,
+		"displayModel": displayModel,
+		"keyboardHandler": keyboardHandler,
+		"locationHelper": locationHelper,
 		"NVDAObjects": nvdaObjects,
 		"NVDAObjects.UIA": uiaModule,
+		"queueHandler": queueHandler,
+		"screenBitmap": screenBitmap,
 		"scriptHandler": scriptHandler,
 		"ui": ui,
 		"UIAHandler": uiaHandler,
+		"winUser": winUser,
 	}
 	previous = {name: sys.modules.get(name) for name in stubs}
 	sys.modules.update(stubs)
@@ -236,6 +300,7 @@ def _loadTelegramModule():
 		assert spec.loader is not None
 		spec.loader.exec_module(module)
 		module._testApi = api
+		module._testCore = core
 		module._testUi = ui
 		return module
 	finally:
@@ -453,6 +518,25 @@ class TelegramAppModuleTests(unittest.TestCase):
 	def test_shortcut_gestures_match_unigram_plus(self):
 		self.assertEqual(self.module.AppModule.script_focusChatList.gesture, "kb:alt+1")
 		self.assertEqual(self.module.AppModule.script_openMainMenu.gesture, "kb:alt+m")
+		self.assertEqual(
+			self.module.AppModule.script_switchChat.gestures,
+			("kb:control+tab", "kb:control+shift+tab"),
+		)
+
+	def test_control_tab_announces_updated_window_chat_title(self):
+		window = _FakeUIA(name="\u200eOld chat")
+		self.module._testApi.foregroundObject = window
+
+		class _Gesture:
+			def send(self):
+				window.name = "\u200eSaved Messages"
+
+		self.module.switchChat(_Gesture())
+		self.assertEqual(len(self.module._testCore.calls), 1)
+		_, callback, args = self.module._testCore.calls.pop()
+		callback(*args)
+
+		self.assertEqual(self.module._testUi.messages, ["Saved Messages"])
 
 
 if __name__ == "__main__":

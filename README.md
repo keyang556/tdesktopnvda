@@ -2,24 +2,26 @@
 
 ## Overview
 
-Telegram Desktop Accessibility is an NVDA add-on for Telegram Desktop on Windows. It adds two direct navigation commands while leaving Telegram's native accessibility behavior and accessible names unchanged.
+Telegram Desktop Accessibility is an NVDA add-on for Telegram Desktop on Windows. It adds direct navigation commands, announces the active chat while switching conversations, and names otherwise unlabeled main-menu controls.
 
 ## Features
 
 * `Alt+1` moves focus to the selected chat in the chat list, or to the first chat when no chat is selected.
 * `Alt+M` opens Telegram's main menu.
+* `Ctrl+Tab` and `Ctrl+Shift+Tab` retain Telegram's native chat switching and announce the newly active chat title.
+* Structural main-menu controls such as Profile and Accounts receive useful accessible labels when Telegram does not provide one.
 * Chat detection uses Telegram's stable UIA class information rather than a translated control name, so the commands do not depend on Telegram's interface language.
-* Telegram continues to provide the names of chats, messages, buttons, and list items. The add-on does not replace or rewrite them.
+* Telegram continues to provide the names of chats, messages, buttons, and list items. The add-on changes names only for known controls that Telegram leaves unlabeled.
 
 ## Usage
 
-Install the add-on, restart NVDA when prompted, and use the two add-on shortcuts from the main Telegram window. No configuration is required.
+Install the add-on, restart NVDA when prompted, and use the shortcuts from the main Telegram window. No configuration is required.
 
-If `Alt+1` cannot find a chat list or the list is empty, NVDA reports that condition. If `Alt+M` is unavailable on the current Telegram screen, NVDA reports that the main menu is not available.
+If `Alt+1` cannot find a chat list or the list is empty, NVDA reports that condition. If `Alt+M` is unavailable on the current Telegram screen, NVDA reports that the main menu is not available. When switching chats, the add-on waits for Telegram's window title to update before announcing it.
 
 ## Implementation
 
-Telegram Desktop's patched Qt accessibility provider exposes RTTI-based UIA class names. The add-on identifies the chat list as `Dialogs::InnerWidget`, allowing it to work independently of the localized accessible name. The main menu command locates Telegram's native menu button inside `Dialogs::Widget` and invokes its existing action.
+Telegram Desktop's patched Qt accessibility provider exposes RTTI-based UIA class names. The add-on identifies the chat list as `Dialogs::InnerWidget`, allowing it to work independently of the localized accessible name. The main menu command locates Telegram's native menu button inside `Dialogs::Widget` and invokes its existing action. A foreground-aware global plugin keeps shortcuts available when another installed add-on supplies Telegram's app module, without intercepting the shortcuts in other applications.
 
 ## Keyboard Shortcuts
 
@@ -29,6 +31,8 @@ Telegram Desktop's patched Qt accessibility provider exposes RTTI-based UIA clas
 |---|---|---|
 | **Alt+1** | Add-on | Move focus to the chat list |
 | **Alt+M** | Add-on | Open the main menu |
+| **Ctrl+Tab** | Telegram + add-on | Move to the next chat and announce its title |
+| **Ctrl+Shift+Tab** | Telegram + add-on | Move to the previous chat and announce its title |
 
 ### Chats
 
@@ -38,8 +42,8 @@ Telegram Desktop's patched Qt accessibility provider exposes RTTI-based UIA clas
 | **Shift+Scroll** | Telegram Desktop | Speed up in-chat navigation |
 | **Up / Left / Right / Down** | Telegram Desktop | Navigate suggested stickers |
 | **Left / Right** | Telegram Desktop | Navigate suggested emoji |
-| **Ctrl+Tab / Ctrl+Page Down / Alt+Down** | Telegram Desktop | Move to the chat below |
-| **Ctrl+Shift+Tab / Ctrl+Page Up / Alt+Up** | Telegram Desktop | Move to the chat above |
+| **Ctrl+Page Down / Alt+Down** | Telegram Desktop | Move to the chat below |
+| **Ctrl+Page Up / Alt+Up** | Telegram Desktop | Move to the chat above |
 | **Esc** | Telegram Desktop | Exit, go back, or cancel the current action |
 | **Ctrl+O** | Telegram Desktop | Send a file |
 

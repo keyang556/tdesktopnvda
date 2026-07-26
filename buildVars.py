@@ -10,11 +10,11 @@ addon_info = AddonInfo(
 	addon_description=_(
 		"""Improves Telegram Desktop accessibility for NVDA users.
 
-Adds Alt+1 to move focus to the chat list and Alt+M to open Telegram's main menu. The add-on uses Telegram's stable UIA class information and leaves Telegram's native accessible names unchanged."""
+Adds Alt+1 to move focus to the chat list, Alt+M to open Telegram's main menu, and chat-title announcements when switching chats with Ctrl+Tab. It also supplies useful names for otherwise unlabeled main-menu controls."""
 	),
-	addon_version="0.1.3",
+	addon_version="0.1.4",
 	addon_changelog=_(
-		"""Fixed Alt+M in Telegram's folder-sidebar layout and fixed an NVDA freeze by replacing recursive object-tree traversal with provider-side UIA queries."""
+		"""Fixed Alt+1 and Alt+M across Telegram layouts and conflicting add-ons, labeled structural main-menu controls, and announced the current chat after Ctrl+Tab or Ctrl+Shift+Tab."""
 	),
 	addon_author="Ken Chang <lindsay714322@gmail.com>",
 	addon_url=None,
@@ -29,6 +29,7 @@ Adds Alt+1 to move focus to the chat list and Alt+M to open Telegram's main menu
 
 pythonSources: list[str] = [
 	"addon/appModules/*.py",
+	"addon/globalPlugins/*.py",
 ]
 i18nSources: list[str] = pythonSources + ["buildVars.py"]
 excludedFiles: list[str] = [
