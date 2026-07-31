@@ -163,9 +163,15 @@ class _FakeUIA:
 		self.focused = True
 
 
-def _loadTelegramModule():
+def _loadTelegramModule(*, executeTwice=False):
 	addonHandler = types.ModuleType("addonHandler")
-	addonHandler.initTranslation = lambda: None
+	addonHandler.translationCalls = 0
+
+	def initTranslation():
+		addonHandler.translationCalls += 1
+		sys._getframe(1).f_globals["_"] = lambda message: message
+
+	addonHandler.initTranslation = initTranslation
 
 	api = types.ModuleType("api")
 	api.focusObject = None
@@ -296,10 +302,12 @@ def _loadTelegramModule():
 	try:
 		spec = importlib.util.spec_from_file_location("telegram_app_module_under_test", MODULE_PATH)
 		module = importlib.util.module_from_spec(spec)
-		module._ = lambda message: message
 		assert spec.loader is not None
 		spec.loader.exec_module(module)
+		if executeTwice:
+			spec.loader.exec_module(module)
 		module._testApi = api
+		module._testAddonHandler = addonHandler
 		module._testCore = core
 		module._testUi = ui
 		return module
@@ -319,6 +327,11 @@ class TelegramAppModuleTests(unittest.TestCase):
 		chatList = _FakeUIA(role=_Role.LIST, name="聊天", className="class Dialogs::InnerWidget")
 
 		self.assertTrue(self.module.isTelegramChatList(chatList))
+
+	def test_qualified_module_reload_does_not_reinitialize_translation(self):
+		module = _loadTelegramModule(executeTwice=True)
+
+		self.assertEqual(module._testAddonHandler.translationCalls, 1)
 
 	def test_chat_list_detection_does_not_depend_on_accessible_name(self):
 		chatList = _FakeUIA(role=_Role.LIST, name="Chats", className="class Settings::InnerWidget")
@@ -537,6 +550,54 @@ class TelegramAppModuleTests(unittest.TestCase):
 		callback(*args)
 
 		self.assertEqual(self.module._testUi.messages, ["Saved Messages"])
+
+	def test_control_tab_reads_current_provider_name_instead_of_cached_name(self):
+		providerWindow = _FakeUIA(name="Old chat")
+		window = _FakeUIA(name="Old chat")
+		window.UIAElement = providerWindow
+		self.module._testApi.foregroundObject = window
+
+		class _Gesture:
+			def send(self):
+				providerWindow.name = "Saved Messages"
+
+		self.module.switchChat(_Gesture())
+		_, callback, args = self.module._testCore.calls.pop()
+		callback(*args)
+
+		self.assertEqual(self.module._testUi.messages, ["Saved Messages"])
+
+	def test_control_tab_uses_painted_title_when_window_name_is_stale(self):
+		window = _FakeUIA(name="Old chat")
+		self.module._testApi.foregroundObject = window
+		self.module._paintedChatTitle = lambda root: "Saved Messages"
+
+		class _Gesture:
+			def send(self):
+				pass
+
+		self.module.switchChat(_Gesture())
+		_, callback, args = self.module._testCore.calls.pop()
+		callback(*args)
+
+		self.assertEqual(self.module._testUi.messages, ["Saved Messages"])
+
+	def test_control_tab_never_announces_previous_title_after_retries(self):
+		window = _FakeUIA(name="Old chat")
+		self.module._testApi.foregroundObject = window
+		self.module._paintedChatTitle = lambda root: "Old chat"
+		self.module._recognizePaintedChatTitle = lambda *args: False
+
+		class _Gesture:
+			def send(self):
+				pass
+
+		self.module.switchChat(_Gesture())
+		while self.module._testCore.calls:
+			_, callback, args = self.module._testCore.calls.pop(0)
+			callback(*args)
+
+		self.assertEqual(self.module._testUi.messages, [])
 
 
 if __name__ == "__main__":

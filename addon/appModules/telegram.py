@@ -29,7 +29,12 @@ import UIAHandler
 import winUser
 
 
-addonHandler.initTranslation()
+# ``importlib.reload`` preserves a module's globals.  Avoid asking NVDA to
+# install the same translation functions a second time: during a qualified
+# add-on module reload, ``addonHandler.initTranslation`` may not be able to
+# recover the caller module from ``inspect``.
+if "_" not in globals():
+	addonHandler.initTranslation()
 
 
 _CHAT_LIST_CLASS_NAME = "Dialogs::InnerWidget"
@@ -384,7 +389,7 @@ def _chatTitleRect(root: object) -> RectLTRB | None:
 		chatList = _findTelegramChatList(root)
 	topBarButton = _findHistoryTopBarButton(root)
 	if chatList is None or topBarButton is None:
-		return ""
+		return None
 	try:
 		chatListLocation = UIA(UIAElement=chatList).location
 		buttonLocation = UIA(UIAElement=topBarButton).location
@@ -416,11 +421,16 @@ def _paintedChatTitle(root: object) -> str:
 
 
 def _windowChatTitle(root: object) -> str:
-	"""Read the current chat title exposed as Telegram's window name."""
-	try:
-		name = cast(Any, root).name
-	except Exception:
-		return ""
+	"""Read Telegram's current provider-side window name.
+
+	NVDA objects cache UIA properties, so ``root.name`` can still describe the
+	previous chat after Telegram has switched.  Query the underlying provider
+	first and retain the NVDA property only as a fallback.
+	"""
+	element = _uiaElement(root)
+	name = _rawElementProperty(element, UIAHandler.UIA_NamePropertyId) if element is not None else None
+	if not isinstance(name, str) or not name:
+		name = _safeStringAttribute(root, "name")
 	if not isinstance(name, str):
 		return ""
 	return name.translate(_CHAT_TITLE_FORMATTING_TRANSLATION).strip()
@@ -446,7 +456,7 @@ def _handleChatTitleRecognition(
 	if generation != _chatSwitchGeneration:
 		return
 	title = _recognitionTitle(result)
-	if title and (title != previousTitle or retriesRemaining <= 0):
+	if title and title != previousTitle:
 		ui.message(title)
 		return
 	if retriesRemaining > 0:
@@ -733,9 +743,14 @@ def _announceSwitchedChat(
 		return
 	root = _foregroundObject()
 	title = _windowChatTitle(root) if root is not None else ""
-	if not title and root is not None:
+	if title and title != previousTitle:
+		ui.message(title)
+		return
+	# Telegram does not update its top-level UIA name in every environment.
+	# Try its painted header even when a non-empty but stale window name exists.
+	if root is not None:
 		title = _paintedChatTitle(root)
-	if title and (title != previousTitle or retriesRemaining <= 0):
+	if title and title != previousTitle:
 		ui.message(title)
 		return
 	if root is not None and _recognizePaintedChatTitle(

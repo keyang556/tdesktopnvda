@@ -1,9 +1,9 @@
 msgid ""
 msgstr ""
-"Project-Id-Version: telegramDesktop 0.1.3\n"
-"Report-Msgid-Bugs-To: nvda-translations@groups.io\n"
-"POT-Creation-Date: 2026-07-16 00:00+0800\n"
-"PO-Revision-Date: 2026-07-16 00:00+0800\n"
+"Project-Id-Version: telegramDesktop 0.1.4\n"
+"Report-Msgid-Bugs-To: 'nvda-translations@groups.io'\n"
+"POT-Creation-Date: 2026-07-31 09:46-0700\n"
+"PO-Revision-Date: 2026-07-31 00:00-0700\n"
 "Last-Translator: Ken Chang <lindsay714322@gmail.com>\n"
 "Language-Team: Traditional Chinese\n"
 "Language: zh_TW\n"
@@ -12,23 +12,14 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-msgid "Telegram Desktop Accessibility"
-msgstr "Telegram 電腦版無障礙支援"
-
-msgid ""
-"Improves Telegram Desktop accessibility for NVDA users.\n"
-"\n"
-"Adds Alt+1 to move focus to the chat list and Alt+M to open Telegram's main menu. The add-on uses Telegram's stable UIA class information and leaves Telegram's native accessible names unchanged."
-msgstr ""
-"改善 Telegram 電腦版與 NVDA 搭配使用時的無障礙體驗。\n"
-"\n"
-"新增 Alt+1 將焦點移至聊天室清單，以及 Alt+M 開啟 Telegram 主選單。附加元件使用 Telegram 穩定的 UIA 類別資訊，並保留 Telegram 原有的無障礙名稱。"
-
-msgid "Fixed Alt+M in Telegram's folder-sidebar layout and fixed an NVDA freeze by replacing recursive object-tree traversal with provider-side UIA queries."
-msgstr "修正 Telegram 資料夾側欄版面中的 Alt+M，並以 UIA 提供者端查詢取代遞迴物件樹走訪，避免 NVDA 凍結。"
-
 msgid "Move focus to chat list"
 msgstr "將焦點移至聊天室清單"
+
+msgid "Open main menu"
+msgstr "開啟主選單"
+
+msgid "Switch chats and announce the chat name"
+msgstr "切換聊天室並朗讀聊天室名稱"
 
 msgid "Chat list not found"
 msgstr "找不到聊天室清單"
@@ -36,8 +27,62 @@ msgstr "找不到聊天室清單"
 msgid "Chat list is empty"
 msgstr "聊天室清單是空的"
 
-msgid "Open main menu"
-msgstr "開啟主選單"
-
 msgid "Main menu is not available"
 msgstr "主選單無法使用"
+
+msgid "Main menu"
+msgstr "主選單"
+
+msgid "Profile"
+msgstr "個人資料"
+
+msgid "Accounts"
+msgstr "帳號"
+
+msgid "Emoji, stickers, and GIFs"
+msgstr "表情符號、貼圖和 GIF"
+
+msgid "Record voice message"
+msgstr "錄製語音訊息"
+
+msgid "Telegram suggestion"
+msgstr "Telegram 建議"
+
+msgid "Dismiss suggestion"
+msgstr "關閉建議"
+
+msgid "Menu item"
+msgstr "選單項目"
+
+msgid "Telegram Desktop Accessibility"
+msgstr "Telegram 電腦版無障礙支援"
+
+msgid ""
+"Improves Telegram Desktop accessibility for NVDA users.\n"
+"\n"
+"Adds Alt+1 to move focus to the chat list, Alt+M to open Telegram's main "
+"menu, and chat-title announcements when switching chats with Ctrl+Tab. It "
+"also supplies useful names for otherwise unlabeled main-menu controls."
+msgstr ""
+"改善 NVDA 使用者使用 Telegram 電腦版時的無障礙體驗。\n"
+"\n"
+"新增 Alt+1 將焦點移至聊天室清單、Alt+M 開啟 Telegram 主選單，以及在使用 "
+"Ctrl+Tab 切換聊天室時朗讀聊天室標題。也為原本沒有標籤的主選單控制項提供實用名"
+"稱。"
+
+msgid ""
+"Fixed Alt+1 and Alt+M across Telegram layouts and conflicting add-ons, "
+"labeled structural main-menu controls, and announced the current chat after "
+"Ctrl+Tab or Ctrl+Shift+Tab."
+msgstr ""
+"修正 Alt+1 與 Alt+M 在不同 Telegram 版面及與其他附加元件衝突時的問題，為主選"
+"單結構控制項加上標籤，並在按下 Ctrl+Tab 或 Ctrl+Shift+Tab 後朗讀目前的聊天"
+"室。"
+
+#~ msgid ""
+#~ "Fixed Alt+M in Telegram's folder-sidebar layout and fixed an NVDA freeze "
+#~ "by replacing recursive object-tree traversal with provider-side UIA "
+#~ "queries."
+#~ msgstr ""
+#~ "修正 Telegram 資料夾側欄版面中的 Alt+M，並以 UIA 提供者端查詢取代遞迴物件"
+#~ "樹走訪，避免 NVDA 凍結。"

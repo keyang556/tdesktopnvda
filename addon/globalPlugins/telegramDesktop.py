@@ -16,6 +16,7 @@ import api
 import controlTypes
 import globalPluginHandler
 from scriptHandler import script
+import UIAHandler
 
 
 addonHandler.initTranslation()
@@ -32,6 +33,11 @@ _MAIN_MENU_CLASS_NAMES = {
 	"Ui::UserpicButton": _("Profile"),
 	"Window::MainMenu::ToggleAccountsButton": _("Accounts"),
 }
+_COMPOSER_AUTOMATION_ID_NAMES = {
+	"ButtonStickers": _("Emoji, stickers, and GIFs"),
+	"btnVoiceMessage": _("Record voice message"),
+}
+_TOP_BAR_SUGGESTION_CLASS_NAME = "Dialogs::TopBarSuggestionContent"
 
 # Loading through the owning add-on gives this module a qualified name and
 # bypasses the shared appModules search path. That matters when UnigramPlus or
@@ -65,15 +71,47 @@ def _automationIdClassNames(automationId: str) -> tuple[str, ...]:
 	)
 
 
-def _cleanMainMenuName(obj: object) -> None:
-	"""Replace RTTI AutomationId chains exposed as accessible names."""
+def _setObjectName(obj: object, name: str) -> None:
+	try:
+		obj.name = name
+	except Exception:
+		pass
+
+
+def _cleanTelegramControlName(obj: object) -> None:
+	"""Supply useful names for known Telegram controls before speech."""
 	if not _isTelegramObject(obj):
 		return
 	try:
 		automationId = obj.UIAAutomationId
-		rawName = obj.UIAElement.CurrentName
 	except Exception:
 		return
+	try:
+		rawName = obj.UIAElement.GetCurrentPropertyValue(UIAHandler.UIA_NamePropertyId)
+	except Exception:
+		try:
+			rawName = obj.UIAElement.CurrentName
+		except Exception:
+			rawName = ""
+	composerFallback = (
+		_COMPOSER_AUTOMATION_ID_NAMES.get(automationId) if isinstance(automationId, str) else None
+	)
+	if composerFallback is not None:
+		# Prefer Telegram's provider name because the voice-message control can
+		# change modes. Some NVDA object overlays fail to expose that name even
+		# though the underlying UIA element still has it.
+		_setObjectName(obj, rawName if isinstance(rawName, str) and rawName else composerFallback)
+		return
+	if isinstance(automationId, str):
+		automationClasses = _automationIdClassNames(automationId)
+		if _TOP_BAR_SUGGESTION_CLASS_NAME in automationClasses:
+			fallback = (
+				_("Telegram suggestion")
+				if _normalizedClassName(obj) == _TOP_BAR_SUGGESTION_CLASS_NAME
+				else _("Dismiss suggestion")
+			)
+			_setObjectName(obj, rawName if isinstance(rawName, str) and rawName else fallback)
+			return
 	if rawName or not isinstance(automationId, str) or "Window::MainMenu" not in automationId:
 		return
 
@@ -94,10 +132,7 @@ def _cleanMainMenuName(obj: object) -> None:
 		except Exception:
 			role = None
 		name = _("Menu item") if role == controlTypes.Role.BUTTON else _("Main menu")
-	try:
-		obj.name = name
-	except Exception:
-		pass
+	_setObjectName(obj, name)
 
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
@@ -134,12 +169,15 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		# This also covers an already-open Telegram window after global plug-ins
 		# are reloaded, and guards against a missed foreground event.
 		self._updateGestureBindings(obj)
-		try:
-			nextHandler()
-		finally:
-			# UnigramPlus treats Telegram's RTTI AutomationId as a fallback
-			# label. Correct it after the app-module event handler has run.
-			_cleanMainMenuName(obj)
+		# Labels must be in place before NVDA's focus handler builds speech.
+		_cleanTelegramControlName(obj)
+		nextHandler()
+
+	def event_focusEntered(self, obj: object, nextHandler: Callable[[], None]) -> None:
+		# Menu containers are announced as focus ancestors rather than direct
+		# focus targets, so label them on focusEntered as well.
+		_cleanTelegramControlName(obj)
+		nextHandler()
 
 	@script(description=_("Move focus to chat list"))
 	def script_focusChatList(self, gesture: object) -> None:
