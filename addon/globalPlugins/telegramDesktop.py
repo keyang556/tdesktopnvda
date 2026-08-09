@@ -25,6 +25,7 @@ _TELEGRAM_APP_NAME = "telegram"
 _TELEGRAM_GESTURES = {
 	"kb:alt+1": "focusChatList",
 	"kb:alt+m": "openMainMenu",
+	"kb:control+enter": "showMessageLinks",
 	"kb:control+tab": "switchChat",
 	"kb:control+shift+tab": "switchChat",
 }
@@ -186,6 +187,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	@script(description=_("Open main menu"))
 	def script_openMainMenu(self, gesture: object) -> None:
 		_telegramModule.openMainMenu()
+
+	@script(description=_("Show links in the current message"))
+	def script_showMessageLinks(self, gesture: object) -> None:
+		_telegramModule.showMessageLinks(gesture)
 
 	@script(description=_("Switch chats and announce the chat name"))
 	def script_switchChat(self, gesture: object) -> None:

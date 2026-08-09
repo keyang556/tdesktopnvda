@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 from typing import Any, cast
 
 import addonHandler
@@ -20,6 +22,7 @@ import core
 import displayModel
 from keyboardHandler import KeyboardInputGesture
 from locationHelper import RectLTRB
+from logHandler import log
 from NVDAObjects.UIA import UIA
 import queueHandler
 import screenBitmap
@@ -43,6 +46,9 @@ _ICON_BUTTON_CLASS_NAME = "Ui::IconButton"
 _MAIN_MENU_CLASS_NAME = "Window::MainMenu"
 _SIDEBAR_BUTTON_CLASS_NAME = "Ui::SideBarButton"
 _HISTORY_TOP_BAR_CLASS_NAME = "HistoryView::TopBarWidget"
+_HISTORY_LIST_CLASS_NAME = "HistoryView::ListWidget"
+_HISTORY_INNER_CLASS_NAME = "HistoryInner"
+_MESSAGE_LIST_AUTOMATION_ID = "ChatsList"
 _RTTI_CLASS_PREFIXES = ("class ", "struct ")
 _CHAT_LIST_POINT_X_OFFSETS = (120, 200, 280)
 _CHAT_LIST_POINT_Y_FRACTIONS = (0.35, 0.55, 0.75)
@@ -57,6 +63,14 @@ _CHAT_TITLE_FORMATTING_TRANSLATION = str.maketrans(
 	"",
 	"\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069",
 )
+_LINK_PATTERN = re.compile(
+	r"(?P<uri>(?:(?:https?|ftp|tg|tonsite)://|mailto:)[^\s<>\u200e\u200f]+)"
+	r"|(?P<www>www\.[^\s<>\u200e\u200f]+)"
+	r"|(?P<email>(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+)",
+	re.IGNORECASE,
+)
+_URL_TRAILING_PUNCTUATION = ".,;:!?\"'\u2026"
+_messageLinksDialog: Any | None = None
 
 
 _chatSwitchGeneration = 0
@@ -139,6 +153,59 @@ def isTelegramMainMenuButton(obj: object) -> bool:
 	return (
 		role == controlTypes.Role.BUTTON and hasPopupState is not None and hasPopupState in _safeStates(obj)
 	)
+
+
+def isTelegramMessage(obj: object) -> bool:
+	"""Return True for a focused message row in supported Telegram clients."""
+	if _safeRole(obj) != controlTypes.Role.LISTITEM:
+		return False
+	ancestor = obj
+	seen: set[int] = set()
+	for _step in range(_MAX_UIA_PARENT_STEPS):
+		try:
+			ancestor = getattr(ancestor, "parent")
+		except Exception:
+			return False
+		if ancestor is None or id(ancestor) in seen:
+			return False
+		seen.add(id(ancestor))
+		automationId = _safeStringAttribute(ancestor, "UIAAutomationId")
+		className = _normalizedClassName(ancestor)
+		if (
+			automationId == _MESSAGE_LIST_AUTOMATION_ID
+			or className == _HISTORY_LIST_CLASS_NAME
+			or _automationIdContainsClass(ancestor, _HISTORY_INNER_CLASS_NAME)
+		):
+			return True
+	return False
+
+
+def _stripTrailingUrlPunctuation(value: str) -> str:
+	"""Remove sentence punctuation without damaging balanced URL brackets."""
+	value = value.rstrip(_URL_TRAILING_PUNCTUATION)
+	for opening, closing in (("(", ")"), ("[", "]"), ("{", "}")):
+		while value.endswith(closing) and value.count(closing) > value.count(opening):
+			value = value[:-1]
+	return value
+
+
+def linksFromMessageText(text: str) -> tuple[str, ...]:
+	"""Extract unique, openable links from a message in reading order."""
+	links: list[str] = []
+	seen: set[str] = set()
+	for match in _LINK_PATTERN.finditer(text):
+		value = _stripTrailingUrlPunctuation(match.group(0))
+		if not value:
+			continue
+		if match.lastgroup == "www":
+			value = f"https://{value}"
+		elif match.lastgroup == "email":
+			value = f"mailto:{value}"
+		key = value.casefold()
+		if key not in seen:
+			seen.add(key)
+			links.append(value)
+	return tuple(links)
 
 
 def _uiaElement(obj: object) -> Any | None:
@@ -641,6 +708,10 @@ class AppModule(appModuleHandler.AppModule):
 	def script_openMainMenu(self, gesture: object) -> None:
 		openMainMenu()
 
+	@script(description=_("Show links in the current message"), gesture="kb:control+enter")
+	def script_showMessageLinks(self, gesture: object) -> None:
+		showMessageLinks(gesture)
+
 	@script(
 		description=_("Switch chats and announce the chat name"),
 		gestures=("kb:control+tab", "kb:control+shift+tab"),
@@ -731,6 +802,96 @@ def openMainMenu() -> None:
 		return
 	if not _invokeElement(button):
 		ui.message(_("Main menu is not available"))
+
+
+def _openMessageLink(url: str) -> None:
+	"""Open a link through its Windows-registered handler."""
+	log.debug("Telegram opening message link: %s", url)
+	try:
+		os.startfile(url)
+	except Exception:
+		ui.message(_("Unable to open link"))
+
+
+def _showMessageLinksMenu(links: tuple[str, ...]) -> None:
+	"""Show a non-blocking NVDA-owned chooser containing the message links."""
+	global _messageLinksDialog
+	log.debug("Telegram link chooser opening with %d item(s)", len(links))
+	try:
+		import gui
+		import wx
+
+		if _messageLinksDialog is not None:
+			_messageLinksDialog.Destroy()
+			_messageLinksDialog = None
+
+		gui.mainFrame.prePopup()
+		try:
+			dialog = wx.SingleChoiceDialog(
+				gui.mainFrame,
+				_("Select a link to open"),
+				_("Links in message"),
+				list(links),
+			)
+			_messageLinksDialog = dialog
+			dialog.SetSelection(0)
+			selectedIndex = 0
+
+			def onSelect(event: object) -> None:
+				nonlocal selectedIndex
+				selection = cast(Any, event).GetSelection()
+				if 0 <= selection < len(links):
+					selectedIndex = selection
+
+			def onOpen(event: object) -> None:
+				selectedUrl = links[selectedIndex]
+				dialog.Close()
+				wx.CallAfter(_openMessageLink, selectedUrl)
+
+			def onClose(event: object) -> None:
+				global _messageLinksDialog
+				if _messageLinksDialog is dialog:
+					_messageLinksDialog = None
+				cast(Any, event).Skip()
+
+			dialog.Bind(wx.EVT_LISTBOX, onSelect)
+			dialog.Bind(wx.EVT_BUTTON, onOpen, id=wx.ID_OK)
+			dialog.Bind(wx.EVT_CLOSE, onClose)
+			dialog.Show()
+			dialog.Raise()
+		finally:
+			gui.mainFrame.postPopup()
+	except Exception:
+		log.exception("Telegram link chooser failed to open")
+		ui.message(_("Unable to show links"))
+
+
+def _sendGesture(gesture: object) -> None:
+	try:
+		cast(Any, gesture).send()
+	except Exception:
+		pass
+
+
+def showMessageLinks(gesture: object) -> None:
+	"""Show all links in the focused message, preserving Ctrl+Enter elsewhere."""
+	focus = _focusObject()
+	if focus is None or not isTelegramMessage(focus):
+		_sendGesture(gesture)
+		return
+	element = _uiaElement(focus)
+	text = _rawElementProperty(element, UIAHandler.UIA_NamePropertyId) if element is not None else None
+	if not isinstance(text, str) or not text:
+		text = _safeStringAttribute(focus, "name")
+	links = linksFromMessageText(text)
+	log.debug("Telegram link menu extracted links: %r", links)
+	if not links:
+		ui.message(_("No links in this message"))
+		return
+	if len(links) == 1:
+		_openMessageLink(links[0])
+		return
+	core.callLater(0, _showMessageLinksMenu, links)
 
 
 def _announceSwitchedChat(

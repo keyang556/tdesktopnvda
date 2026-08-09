@@ -99,6 +99,9 @@ class _FakeUIA:
 		self.UIAAutomationId = automationId
 		self.states = set(states or ())
 		self.children = list(children or ())
+		self.parent = None
+		for child in self.children:
+			child.parent = self
 		self.isOffscreen = isOffscreen
 		self.failQuery = failQuery
 		self.failAction = failAction
@@ -263,6 +266,11 @@ def _loadTelegramModule(*, executeTwice=False):
 			self.bottom = bottom
 
 	locationHelper.RectLTRB = _RectLTRB
+	logHandler = types.ModuleType("logHandler")
+	logHandler.log = types.SimpleNamespace(
+		debug=lambda *args, **kwargs: None,
+		exception=lambda *args, **kwargs: None,
+	)
 
 	queueHandler = types.ModuleType("queueHandler")
 	queueHandler.eventQueue = object()
@@ -288,6 +296,7 @@ def _loadTelegramModule(*, executeTwice=False):
 		"displayModel": displayModel,
 		"keyboardHandler": keyboardHandler,
 		"locationHelper": locationHelper,
+		"logHandler": logHandler,
 		"NVDAObjects": nvdaObjects,
 		"NVDAObjects.UIA": uiaModule,
 		"queueHandler": queueHandler,
@@ -531,10 +540,188 @@ class TelegramAppModuleTests(unittest.TestCase):
 	def test_shortcut_gestures_match_unigram_plus(self):
 		self.assertEqual(self.module.AppModule.script_focusChatList.gesture, "kb:alt+1")
 		self.assertEqual(self.module.AppModule.script_openMainMenu.gesture, "kb:alt+m")
+		self.assertEqual(self.module.AppModule.script_showMessageLinks.gesture, "kb:control+enter")
 		self.assertEqual(
 			self.module.AppModule.script_switchChat.gestures,
 			("kb:control+tab", "kb:control+shift+tab"),
 		)
+
+	def test_link_extraction_preserves_order_and_removes_message_punctuation(self):
+		text = (
+			"Android: https://play.google.com/store/apps/details?id=app, "
+			"iOS: https://apps.apple.com/app/id123. "
+			"Windows: https://example.com/download_(stable)."
+		)
+
+		self.assertEqual(
+			self.module.linksFromMessageText(text),
+			(
+				"https://play.google.com/store/apps/details?id=app",
+				"https://apps.apple.com/app/id123",
+				"https://example.com/download_(stable)",
+			),
+		)
+
+	def test_link_extraction_normalizes_www_and_email_and_deduplicates(self):
+		text = "www.example.com Help@Example.com https://EXAMPLE.com https://example.com"
+
+		self.assertEqual(
+			self.module.linksFromMessageText(text),
+			("https://www.example.com", "mailto:Help@Example.com", "https://EXAMPLE.com"),
+		)
+
+	def test_control_enter_shows_all_links_from_unigram_message(self):
+		message = _FakeUIA(
+			role=_Role.LISTITEM,
+			name="First https://one.example/path and https://two.example/path",
+		)
+		_FakeUIA(role=_Role.LIST, automationId="ChatsList", children=[message])
+		self.module._testApi.focusObject = message
+
+		class _Gesture:
+			sent = False
+
+			def send(self):
+				self.sent = True
+
+		gesture = _Gesture()
+		self.module.AppModule().script_showMessageLinks(gesture)
+
+		self.assertFalse(gesture.sent)
+		self.assertEqual(len(self.module._testCore.calls), 1)
+		_, callback, args = self.module._testCore.calls[0]
+		self.assertIs(callback, self.module._showMessageLinksMenu)
+		self.assertEqual(args, (("https://one.example/path", "https://two.example/path"),))
+
+	def test_control_enter_supports_qt_history_message_list(self):
+		message = _FakeUIA(role=_Role.LISTITEM, name="https://example.com")
+		_FakeUIA(role=_Role.LIST, className="class HistoryView::ListWidget", children=[message])
+		self.module._testApi.focusObject = message
+		opened = []
+		self.module._openMessageLink = opened.append
+
+		self.module.AppModule().script_showMessageLinks(None)
+
+		self.assertEqual(opened, ["https://example.com"])
+		self.assertEqual(self.module._testCore.calls, [])
+
+	def test_control_enter_finds_message_list_through_accessibility_wrappers(self):
+		message = _FakeUIA(role=_Role.LISTITEM, name="https://example.com")
+		wrapper = _FakeUIA(children=[message])
+		_FakeUIA(role=_Role.LIST, automationId="ChatsList", children=[wrapper])
+		self.module._testApi.focusObject = message
+		opened = []
+		self.module._openMessageLink = opened.append
+
+		self.module.AppModule().script_showMessageLinks(None)
+
+		self.assertEqual(opened, ["https://example.com"])
+		self.assertEqual(self.module._testCore.calls, [])
+
+	def test_control_enter_supports_live_qt_history_inner_hierarchy(self):
+		message = _FakeUIA(role=_Role.LISTITEM, name="https://example.com")
+		_FakeUIA(
+			automationId=(
+				"class MainWindow.class Ui::RpWidget.class MainWidget."
+				"class HistoryWidget.class Ui::ElasticScroll.class HistoryInner"
+			),
+			children=[message],
+		)
+		self.module._testApi.focusObject = message
+		opened = []
+		self.module._openMessageLink = opened.append
+
+		self.module.AppModule().script_showMessageLinks(None)
+
+		self.assertEqual(opened, ["https://example.com"])
+		self.assertEqual(self.module._testCore.calls, [])
+
+	def test_multiple_link_chooser_opens_live_second_selection(self):
+		class _Dialog:
+			def __init__(self):
+				self.bindings = {}
+
+			def SetSelection(self, selection):
+				self.selection = selection
+
+			def Bind(self, eventType, handler, id=None):
+				self.bindings[(eventType, id)] = handler
+
+			def Show(self):
+				pass
+
+			def Raise(self):
+				pass
+
+			def Close(self):
+				pass
+
+			def Destroy(self):
+				pass
+
+		class _SelectionEvent:
+			def GetSelection(self):
+				return 1
+
+		dialog = _Dialog()
+		wx = types.ModuleType("wx")
+		wx.EVT_BUTTON = "button"
+		wx.EVT_CLOSE = "close"
+		wx.EVT_LISTBOX = "listbox"
+		wx.ID_OK = 1
+		wx.CallAfter = lambda callback, *args: callback(*args)
+		wx.SingleChoiceDialog = lambda *args: dialog
+		gui = types.ModuleType("gui")
+		gui.mainFrame = types.SimpleNamespace(
+			prePopup=lambda: None,
+			postPopup=lambda: None,
+		)
+		previousGui = sys.modules.get("gui")
+		previousWx = sys.modules.get("wx")
+		sys.modules["gui"] = gui
+		sys.modules["wx"] = wx
+		opened = []
+		self.module._openMessageLink = opened.append
+		try:
+			self.module._showMessageLinksMenu(("https://one.example", "https://two.example"))
+			dialog.bindings[(wx.EVT_LISTBOX, None)](_SelectionEvent())
+			dialog.bindings[(wx.EVT_BUTTON, wx.ID_OK)](object())
+		finally:
+			if previousGui is None:
+				sys.modules.pop("gui", None)
+			else:
+				sys.modules["gui"] = previousGui
+			if previousWx is None:
+				sys.modules.pop("wx", None)
+			else:
+				sys.modules["wx"] = previousWx
+
+		self.assertEqual(opened, ["https://two.example"])
+
+	def test_control_enter_reports_message_without_links(self):
+		message = _FakeUIA(role=_Role.LISTITEM, name="A message without a link")
+		_FakeUIA(role=_Role.LIST, automationId="ChatsList", children=[message])
+		self.module._testApi.focusObject = message
+
+		self.module.AppModule().script_showMessageLinks(None)
+
+		self.assertEqual(self.module._testUi.messages, ["No links in this message"])
+		self.assertEqual(self.module._testCore.calls, [])
+
+	def test_control_enter_passes_through_outside_message_list(self):
+		self.module._testApi.focusObject = _FakeUIA(role=_Role.BUTTON, name="Send")
+
+		class _Gesture:
+			sent = False
+
+			def send(self):
+				self.sent = True
+
+		gesture = _Gesture()
+		self.module.AppModule().script_showMessageLinks(gesture)
+
+		self.assertTrue(gesture.sent)
+		self.assertEqual(self.module._testCore.calls, [])
 
 	def test_control_tab_announces_updated_window_chat_title(self):
 		window = _FakeUIA(name="\u200eOld chat")

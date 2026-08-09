@@ -10,11 +10,11 @@ addon_info = AddonInfo(
 	addon_description=_(
 		"""Improves Telegram Desktop accessibility for NVDA users.
 
-Adds Alt+1 to move focus to the chat list, Alt+M to open Telegram's main menu, and chat-title announcements when switching chats with Ctrl+Tab. It also supplies useful names for otherwise unlabeled main-menu controls."""
+Adds Alt+1 to move focus to the chat list, Alt+M to open Telegram's main menu, Ctrl+Enter to open or choose links from the focused message, and chat-title announcements when switching chats with Ctrl+Tab. It also supplies useful names for otherwise unlabeled main-menu controls."""
 	),
 	addon_version="0.1.4",
 	addon_changelog=_(
-		"""Fixed Alt+1 and Alt+M across Telegram layouts and conflicting add-ons, labeled structural main-menu controls, and announced the current chat after Ctrl+Tab or Ctrl+Shift+Tab."""
+		"""Added Ctrl+Enter to open a message's only link directly or choose among multiple links. Also fixed Alt+1 and Alt+M across Telegram layouts and conflicting add-ons, labeled structural main-menu controls, and announced the current chat after Ctrl+Tab or Ctrl+Shift+Tab."""
 	),
 	addon_author="Ken Chang <lindsay714322@gmail.com>",
 	addon_url=None,

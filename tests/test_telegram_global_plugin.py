@@ -62,6 +62,7 @@ def _loadGlobalPluginModule():
 	telegramModule = types.SimpleNamespace(
 		focusChatList=lambda: None,
 		openMainMenu=lambda: None,
+		showMessageLinks=lambda gesture: None,
 		switchChat=lambda gesture: None,
 	)
 	codeAddon = types.SimpleNamespace(
@@ -149,6 +150,17 @@ class TelegramGlobalPluginTests(unittest.TestCase):
 		self.assertEqual(self.module._testCodeAddon.loadModuleCalls, ["appModules.telegram"])
 		self.assertEqual(len(self.module._testImportlib.reloadCalls), 1)
 		self.assertEqual(self.module._testAddonHandler.translationCalls, 1)
+
+	def test_control_enter_is_bound_while_telegram_is_foreground(self):
+		foreground = _FakeObject(
+			automationId="",
+			className="",
+			role=_Role.BUTTON,
+		)
+		plugin = self.module.GlobalPlugin()
+		plugin._updateGestureBindings(foreground)
+
+		self.assertEqual(plugin.boundGestures["kb:control+enter"], "showMessageLinks")
 
 	def test_profile_label_is_applied_before_focus_announcement(self):
 		obj = _FakeObject(
