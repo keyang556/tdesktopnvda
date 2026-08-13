@@ -384,12 +384,14 @@ def _paintedChatTitle(root: object) -> str:
 		return ""
 
 
-def _windowChatTitle(root: object) -> str:
-	"""Read Telegram's current provider-side window name.
+def _windowTitle(root: object) -> str:
+	"""Read Telegram's current provider-side window name as it stands.
 
 	NVDA objects cache UIA properties, so ``root.name`` can still describe the
 	previous chat after Telegram has switched.  Query the underlying provider
-	first and retain the NVDA property only as a fallback.
+	first and retain the NVDA property only as a fallback. The title is kept
+	whole here: it is what tells one window state from the next, and reducing
+	it first would hide a switch between two chats of the same name.
 	"""
 	element = _uiaElement(root)
 	name = _rawElementProperty(element, UIAHandler.UIA_NamePropertyId) if element is not None else None
@@ -397,7 +399,12 @@ def _windowChatTitle(root: object) -> str:
 		name = _safeStringAttribute(root, "name")
 	if not isinstance(name, str):
 		return ""
-	return _chatNameFromWindowTitle(name)
+	return _normalizedTitleText(name)
+
+
+def _windowChatTitle(root: object) -> str:
+	"""Return the chat name Telegram's window title announces."""
+	return _chatNameFromWindowTitle(_windowTitle(root))
 
 
 def _recognitionTitle(result: RecognitionResult | Exception) -> str:
@@ -625,10 +632,15 @@ def _announceSwitchedChat(context: _ChatSwitchContext, retriesRemaining: int) ->
 	root = _telegramWindow(context)
 	if root is None:
 		return
-	title = _windowChatTitle(root)
-	if title and title != context.previousWindowTitle:
-		ui.message(title)
-		return
+	# The whole window title decides whether Telegram has moved on, because
+	# reducing it first makes a switch between two chats of the same name look
+	# like no switch at all. Only what is spoken is reduced.
+	windowTitle = _windowTitle(root)
+	if windowTitle and windowTitle != context.previousWindowTitle:
+		chatName = _chatNameFromWindowTitle(windowTitle)
+		if chatName:
+			ui.message(chatName)
+			return
 	# Telegram does not update its top-level UIA name in every environment.
 	# Try its painted header even when a non-empty but stale window name exists.
 	title = _paintedChatTitle(root)
@@ -650,7 +662,7 @@ def switchChat(gesture: object) -> None:
 	"""Pass through Telegram's chat switch, then announce its new chat name."""
 	global _chatSwitchGeneration
 	root = _foregroundObject()
-	previousWindowTitle = _windowChatTitle(root) if root is not None else ""
+	previousWindowTitle = _windowTitle(root) if root is not None else ""
 	previousPaintedTitle = _paintedChatTitle(root) if root is not None else ""
 	identity = _foregroundIdentity()
 	try:

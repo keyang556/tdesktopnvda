@@ -580,6 +580,23 @@ class TelegramAppModuleTests(unittest.TestCase):
 
 		self.assertEqual(self.module._testUi.messages, [])
 
+	def test_control_tab_announces_a_new_chat_that_shares_the_previous_name(self):
+		# Only the unread count separates the two titles, so a reduced title
+		# would compare equal and the switch would never be announced.
+		window = _FakeUIA(name="(3) Old chat")
+		self.module._testApi.foregroundObject = window
+		self.module._paintedChatTitle = lambda root: ""
+
+		class _Gesture:
+			def send(self):
+				window.name = "Old chat"
+
+		self.module.switchChat(_Gesture())
+		_, callback, args = self.module._testCore.calls.pop()
+		callback(*args)
+
+		self.assertEqual(self.module._testUi.messages, ["Old chat"])
+
 	def test_control_tab_does_not_report_a_stale_window_title_as_a_new_chat(self):
 		# The window name keeps Telegram's own decorations while the painted
 		# header and OCR expose the bare chat name, so the two must never be
