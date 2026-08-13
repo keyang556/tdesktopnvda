@@ -181,10 +181,11 @@ def _loadTelegramModule():
 	uiaModule = types.ModuleType("NVDAObjects.UIA")
 	uiaModule.UIA = _FakeUIA
 
-	def fakeScript(*, description, gesture):
+	def fakeScript(*, description, gesture=None, gestures=None):
 		def decorator(function):
 			function.__doc__ = description
 			function.gesture = gesture
+			function.gestures = gestures
 			return function
 
 		return decorator
@@ -217,12 +218,55 @@ def _loadTelegramModule():
 		baseCacheRequest=object(),
 	)
 
+	contentRecog = types.ModuleType("contentRecog")
+	contentRecog.RecogImageInfo = type("RecogImageInfo", (), {})
+	contentRecog.RecognitionResult = object
+	uwpOcr = types.ModuleType("contentRecog.uwpOcr")
+	uwpOcr.UwpOcr = type("UwpOcr", (), {})
+
+	core = types.ModuleType("core")
+	core.calls = []
+	core.callLater = lambda delay, function, *args: core.calls.append((delay, function, args))
+
+	displayModel = types.ModuleType("displayModel")
+
+	class _UnavailableDisplayModelTextInfo:
+		def __init__(self, *args, **kwargs):
+			raise RuntimeError("display model unavailable in isolated tests")
+
+	displayModel.DisplayModelTextInfo = _UnavailableDisplayModelTextInfo
+
+	locationHelper = types.ModuleType("locationHelper")
+
+	class _RectLTRB:
+		def __init__(self, left, top, right, bottom):
+			self.left = left
+			self.top = top
+			self.right = right
+			self.bottom = bottom
+
+	locationHelper.RectLTRB = _RectLTRB
+
+	queueHandler = types.ModuleType("queueHandler")
+	queueHandler.eventQueue = object()
+	queueHandler.queueFunction = lambda queue, function, *args: function(*args)
+
+	screenBitmap = types.ModuleType("screenBitmap")
+	screenBitmap.ScreenBitmap = type("ScreenBitmap", (), {})
+
 	stubs = {
 		"api": api,
 		"appModuleHandler": appModuleHandler,
 		"controlTypes": controlTypes,
+		"contentRecog": contentRecog,
+		"contentRecog.uwpOcr": uwpOcr,
+		"core": core,
+		"displayModel": displayModel,
+		"locationHelper": locationHelper,
 		"NVDAObjects": nvdaObjects,
 		"NVDAObjects.UIA": uiaModule,
+		"queueHandler": queueHandler,
+		"screenBitmap": screenBitmap,
 		"scriptHandler": scriptHandler,
 		"ui": ui,
 		"UIAHandler": uiaHandler,
@@ -236,6 +280,7 @@ def _loadTelegramModule():
 		assert spec.loader is not None
 		spec.loader.exec_module(module)
 		module._testApi = api
+		module._testCore = core
 		module._testUi = ui
 		return module
 	finally:
@@ -453,6 +498,85 @@ class TelegramAppModuleTests(unittest.TestCase):
 	def test_shortcut_gestures_match_unigram_plus(self):
 		self.assertEqual(self.module.AppModule.script_focusChatList.gesture, "kb:alt+1")
 		self.assertEqual(self.module.AppModule.script_openMainMenu.gesture, "kb:alt+m")
+		self.assertEqual(
+			self.module.AppModule.script_switchChat.gestures,
+			("kb:control+tab", "kb:control+shift+tab"),
+		)
+
+	def test_control_tab_announces_updated_window_chat_title(self):
+		window = _FakeUIA(name="\u200eOld chat")
+		self.module._testApi.foregroundObject = window
+
+		class _Gesture:
+			def send(self):
+				window.name = "\u200eSaved Messages"
+
+		self.module.switchChat(_Gesture())
+		self.assertEqual(len(self.module._testCore.calls), 1)
+		_, callback, args = self.module._testCore.calls.pop()
+		callback(*args)
+
+		self.assertEqual(self.module._testUi.messages, ["Saved Messages"])
+
+	def test_control_tab_reads_current_provider_name_instead_of_cached_name(self):
+		providerWindow = _FakeUIA(name="Old chat")
+		window = _FakeUIA(name="Old chat")
+		window.UIAElement = providerWindow
+		self.module._testApi.foregroundObject = window
+
+		class _Gesture:
+			def send(self):
+				providerWindow.name = "Saved Messages"
+
+		self.module.switchChat(_Gesture())
+		_, callback, args = self.module._testCore.calls.pop()
+		callback(*args)
+
+		self.assertEqual(self.module._testUi.messages, ["Saved Messages"])
+
+	def test_control_tab_uses_painted_title_when_window_name_is_stale(self):
+		window = _FakeUIA(name="Old chat")
+		self.module._testApi.foregroundObject = window
+		self.module._paintedChatTitle = lambda root: "Saved Messages"
+
+		class _Gesture:
+			def send(self):
+				pass
+
+		self.module.switchChat(_Gesture())
+		_, callback, args = self.module._testCore.calls.pop()
+		callback(*args)
+
+		self.assertEqual(self.module._testUi.messages, ["Saved Messages"])
+
+	def test_control_tab_never_announces_previous_title_after_retries(self):
+		window = _FakeUIA(name="Old chat")
+		self.module._testApi.foregroundObject = window
+		self.module._paintedChatTitle = lambda root: "Old chat"
+		self.module._recognizePaintedChatTitle = lambda *args: False
+
+		class _Gesture:
+			def send(self):
+				pass
+
+		self.module.switchChat(_Gesture())
+		while self.module._testCore.calls:
+			_, callback, args = self.module._testCore.calls.pop(0)
+			callback(*args)
+
+		self.assertEqual(self.module._testUi.messages, [])
+
+	def test_control_tab_does_not_announce_when_telegram_rejects_the_gesture(self):
+		self.module._testApi.foregroundObject = _FakeUIA(name="Old chat")
+
+		class _Gesture:
+			def send(self):
+				raise RuntimeError("gesture rejected")
+
+		self.module.switchChat(_Gesture())
+
+		self.assertEqual(self.module._testCore.calls, [])
+		self.assertEqual(self.module._testUi.messages, [])
 
 
 if __name__ == "__main__":

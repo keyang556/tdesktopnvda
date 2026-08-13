@@ -12,7 +12,14 @@ from typing import Any, cast
 import api
 import appModuleHandler
 import controlTypes
+from contentRecog import RecogImageInfo, RecognitionResult
+from contentRecog.uwpOcr import UwpOcr
+import core
+import displayModel
+from locationHelper import RectLTRB
 from NVDAObjects.UIA import UIA
+import queueHandler
+import screenBitmap
 from scriptHandler import script
 import ui
 import UIAHandler
@@ -22,7 +29,20 @@ _CHAT_LIST_CLASS_NAME = "Dialogs::InnerWidget"
 _DIALOGS_WIDGET_CLASS_NAME = "Dialogs::Widget"
 _ICON_BUTTON_CLASS_NAME = "Ui::IconButton"
 _SIDEBAR_BUTTON_CLASS_NAME = "Ui::SideBarButton"
+_HISTORY_TOP_BAR_CLASS_NAME = "HistoryView::TopBarWidget"
 _RTTI_CLASS_PREFIXES = ("class ", "struct ")
+_CHAT_SWITCH_ANNOUNCEMENT_DELAY_MS = 200
+_CHAT_SWITCH_ANNOUNCEMENT_RETRY_MS = 100
+_CHAT_SWITCH_ANNOUNCEMENT_RETRIES = 4
+_CHAT_TITLE_FORMATTING_TRANSLATION = str.maketrans(
+	"",
+	"",
+	"\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069",
+)
+
+
+_chatSwitchGeneration = 0
+_chatTitleRecognizer: UwpOcr | None = None
 
 
 def _safeStringAttribute(obj: object, attribute: str) -> str:
@@ -160,6 +180,13 @@ def _findTelegramChatList(root: object) -> Any | None:
 	return _findFirstElement(element, UIAHandler.TreeScope_Subtree, conditions)
 
 
+def _rawElementProperty(element: Any, propertyId: int) -> object | None:
+	try:
+		return element.GetCurrentPropertyValue(propertyId)
+	except Exception:
+		return None
+
+
 def _findChatListItem(chatList: Any) -> Any | None:
 	"""Prefer the selected chat row, then the first direct chat-list item."""
 	try:
@@ -246,6 +273,171 @@ def _findTelegramMainMenuButton(root: object) -> Any | None:
 	)
 
 
+def _findHistoryTopBarButton(root: object) -> Any | None:
+	"""Return the leftmost accessible button bordering the painted chat title."""
+	element = _uiaElement(root)
+	if element is None:
+		return None
+	try:
+		client: Any = _uiaHandler().clientObject
+		conditions = [
+			_rttiClassCondition(client, _ICON_BUTTON_CLASS_NAME),
+			_propertyCondition(
+				client,
+				UIAHandler.UIA_ControlTypePropertyId,
+				UIAHandler.UIA_ButtonControlTypeId,
+			),
+			_propertyCondition(client, UIAHandler.UIA_IsOffscreenPropertyId, False),
+			client.CreatePropertyConditionEx(
+				UIAHandler.UIA_AutomationIdPropertyId,
+				_HISTORY_TOP_BAR_CLASS_NAME,
+				UIAHandler.PropertyConditionFlags_MatchSubstring,
+			),
+		]
+	except Exception:
+		return None
+	return _findFirstElement(element, UIAHandler.TreeScope_Subtree, conditions)
+
+
+def _chatTitleRect(root: object) -> RectLTRB | None:
+	"""Return the screen rectangle containing Telegram's painted chat title."""
+	chatList = _findTelegramChatList(root)
+	topBarButton = _findHistoryTopBarButton(root)
+	if chatList is None or topBarButton is None:
+		return None
+	try:
+		chatListLocation = UIA(UIAElement=chatList).location
+		buttonLocation = UIA(UIAElement=topBarButton).location
+		left = chatListLocation.right
+		right = buttonLocation.left
+		top = buttonLocation.top
+		bottom = buttonLocation.bottom
+		if right <= left or bottom <= top:
+			return None
+		return RectLTRB(left, top, right, bottom)
+	except Exception:
+		return None
+
+
+def _paintedChatTitle(root: object) -> str:
+	"""Read Telegram's painted conversation title through NVDA's display model."""
+	rect = _chatTitleRect(root)
+	if rect is None:
+		return ""
+	try:
+		info = displayModel.DisplayModelTextInfo(
+			root,
+			rect,
+		)
+		lines = (line.strip() for line in info.text.splitlines())
+		return next((line for line in lines if line), "")
+	except Exception:
+		return ""
+
+
+def _windowChatTitle(root: object) -> str:
+	"""Read Telegram's current provider-side window name.
+
+	NVDA objects cache UIA properties, so ``root.name`` can still describe the
+	previous chat after Telegram has switched.  Query the underlying provider
+	first and retain the NVDA property only as a fallback.
+	"""
+	element = _uiaElement(root)
+	name = _rawElementProperty(element, UIAHandler.UIA_NamePropertyId) if element is not None else None
+	if not isinstance(name, str) or not name:
+		name = _safeStringAttribute(root, "name")
+	if not isinstance(name, str):
+		return ""
+	return name.translate(_CHAT_TITLE_FORMATTING_TRANSLATION).strip()
+
+
+def _recognitionTitle(result: RecognitionResult | Exception) -> str:
+	if isinstance(result, Exception):
+		return ""
+	try:
+		lines = (line.strip() for line in result.text.splitlines())
+	except Exception:
+		return ""
+	return next((line for line in lines if line), "")
+
+
+def _handleChatTitleRecognition(
+	result: RecognitionResult | Exception,
+	generation: int,
+	previousTitle: str,
+	retriesRemaining: int,
+) -> None:
+	"""Handle the asynchronous OCR result on NVDA's main event queue."""
+	if generation != _chatSwitchGeneration:
+		return
+	title = _recognitionTitle(result)
+	if title and title != previousTitle:
+		ui.message(title)
+		return
+	if retriesRemaining > 0:
+		core.callLater(
+			_CHAT_SWITCH_ANNOUNCEMENT_RETRY_MS,
+			_announceSwitchedChat,
+			generation,
+			previousTitle,
+			retriesRemaining - 1,
+		)
+
+
+def _recognizePaintedChatTitle(
+	root: object,
+	generation: int,
+	previousTitle: str,
+	retriesRemaining: int,
+) -> bool:
+	"""Start Windows OCR for Telegram's small painted title rectangle."""
+	global _chatTitleRecognizer
+	rect = _chatTitleRect(root)
+	if rect is None:
+		return False
+	try:
+		recognizer = UwpOcr()
+		width = rect.right - rect.left
+		height = rect.bottom - rect.top
+		imageInfo = RecogImageInfo.createFromRecognizer(
+			rect.left,
+			rect.top,
+			width,
+			height,
+			recognizer,
+		)
+		bitmap = screenBitmap.ScreenBitmap(
+			imageInfo.recogWidth,
+			imageInfo.recogHeight,
+		)
+		pixels = bitmap.captureImage(
+			imageInfo.screenLeft,
+			imageInfo.screenTop,
+			imageInfo.screenWidth,
+			imageInfo.screenHeight,
+		)
+	except Exception:
+		return False
+
+	_chatTitleRecognizer = recognizer
+
+	def onResult(result: RecognitionResult | Exception) -> None:
+		queueHandler.queueFunction(
+			queueHandler.eventQueue,
+			_handleChatTitleRecognition,
+			result,
+			generation,
+			previousTitle,
+			retriesRemaining,
+		)
+
+	try:
+		recognizer.recognize(pixels, imageInfo, onResult)
+	except Exception:
+		return False
+	return True
+
+
 def _sameUIAElement(left: Any, right: Any) -> bool:
 	if left is None or right is None:
 		return False
@@ -330,3 +522,69 @@ class AppModule(appModuleHandler.AppModule):
 			return
 		if not _invokeElement(button):
 			ui.message(_("Main menu is not available"))
+
+	@script(
+		description=_("Switch chats and announce the chat name"),
+		gestures=("kb:control+tab", "kb:control+shift+tab"),
+	)
+	def script_switchChat(self, gesture: object) -> None:
+		switchChat(gesture)
+
+
+def _announceSwitchedChat(
+	generation: int,
+	previousTitle: str,
+	retriesRemaining: int,
+) -> None:
+	"""Wait for Telegram's window title to update, then announce it."""
+	if generation != _chatSwitchGeneration:
+		return
+	root = _foregroundObject()
+	title = _windowChatTitle(root) if root is not None else ""
+	if title and title != previousTitle:
+		ui.message(title)
+		return
+	# Telegram does not update its top-level UIA name in every environment.
+	# Try its painted header even when a non-empty but stale window name exists.
+	if root is not None:
+		title = _paintedChatTitle(root)
+	if title and title != previousTitle:
+		ui.message(title)
+		return
+	if root is not None and _recognizePaintedChatTitle(
+		root,
+		generation,
+		previousTitle,
+		retriesRemaining,
+	):
+		return
+	if retriesRemaining > 0:
+		core.callLater(
+			_CHAT_SWITCH_ANNOUNCEMENT_RETRY_MS,
+			_announceSwitchedChat,
+			generation,
+			previousTitle,
+			retriesRemaining - 1,
+		)
+
+
+def switchChat(gesture: object) -> None:
+	"""Pass through Telegram's chat switch, then announce its new chat name."""
+	global _chatSwitchGeneration
+	root = _foregroundObject()
+	previousTitle = _windowChatTitle(root) if root is not None else ""
+	if not previousTitle and root is not None:
+		previousTitle = _paintedChatTitle(root)
+	try:
+		cast(Any, gesture).send()
+	except Exception:
+		return
+	_chatSwitchGeneration += 1
+	generation = _chatSwitchGeneration
+	core.callLater(
+		_CHAT_SWITCH_ANNOUNCEMENT_DELAY_MS,
+		_announceSwitchedChat,
+		generation,
+		previousTitle,
+		_CHAT_SWITCH_ANNOUNCEMENT_RETRIES,
+	)
