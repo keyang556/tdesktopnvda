@@ -13,6 +13,7 @@ from typing import Any, NamedTuple, cast
 from urllib.parse import unquote
 from urllib.request import url2pathname
 
+import addonHandler
 import api
 import appModuleHandler
 from comInterfaces.UIAutomationClient import tagPOINT
@@ -32,6 +33,14 @@ import textInfos
 import ui
 import UIAHandler
 import winUser
+
+
+# ``importlib.reload`` preserves a module's globals.  Avoid asking NVDA to
+# install the same translation functions a second time: during a qualified
+# add-on module reload, ``addonHandler.initTranslation`` may not be able to
+# recover the caller module from ``inspect``.
+if "_" not in globals():
+	addonHandler.initTranslation()
 
 
 _CHAT_LIST_CLASS_NAME = "Dialogs::InnerWidget"
@@ -991,15 +1000,7 @@ class AppModule(appModuleHandler.AppModule):
 
 	@script(description=_("Open main menu"), gesture="kb:alt+m")
 	def script_openMainMenu(self, gesture: object) -> None:
-		root = _foregroundObject()
-		button = _findTelegramMainMenuButtonFromPoints(root) if root is not None else None
-		if button is None and root is not None:
-			button = _findTelegramMainMenuButton(root)
-		if button is None:
-			ui.message(_("Main menu is not available"))
-			return
-		if not _invokeElement(button):
-			ui.message(_("Main menu is not available"))
+		openMainMenu()
 
 	@script(
 		description=_("Switch chats and announce the chat name"),
@@ -1223,6 +1224,19 @@ def switchChat(gesture: object) -> None:
 		),
 		_CHAT_SWITCH_ANNOUNCEMENT_RETRIES,
 	)
+
+
+def openMainMenu() -> None:
+	"""Invoke Telegram's main-menu button."""
+	root = _foregroundObject()
+	button = _findTelegramMainMenuButtonFromPoints(root) if root is not None else None
+	if button is None and root is not None:
+		button = _findTelegramMainMenuButton(root)
+	if button is None:
+		ui.message(_("Main menu is not available"))
+		return
+	if not _invokeElement(button):
+		ui.message(_("Main menu is not available"))
 
 
 def _redactedLink(url: str) -> str:

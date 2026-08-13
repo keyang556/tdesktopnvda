@@ -189,7 +189,16 @@ class _FakeUIA:
 		self.focused = True
 
 
-def _loadTelegramModule():
+def _loadTelegramModule(*, executeTwice=False):
+	addonHandler = types.ModuleType("addonHandler")
+	addonHandler.translationCalls = 0
+
+	def initTranslation():
+		addonHandler.translationCalls += 1
+		sys._getframe(1).f_globals["_"] = lambda message: message
+
+	addonHandler.initTranslation = initTranslation
+
 	api = types.ModuleType("api")
 	api.focusObject = None
 	api.foregroundObject = None
@@ -246,6 +255,7 @@ def _loadTelegramModule():
 
 	comInterfaces = types.ModuleType("comInterfaces")
 	uiaClient = types.ModuleType("comInterfaces.UIAutomationClient")
+	uiaClient.IUIAutomationInvokePattern = object
 	uiaClient.tagPOINT = lambda x, y: types.SimpleNamespace(x=x, y=y)
 	contentRecog = types.ModuleType("contentRecog")
 	contentRecog.RecogImageInfo = type("RecogImageInfo", (), {})
@@ -304,6 +314,7 @@ def _loadTelegramModule():
 	)
 
 	stubs = {
+		"addonHandler": addonHandler,
 		"api": api,
 		"appModuleHandler": appModuleHandler,
 		"comInterfaces": comInterfaces,
@@ -331,9 +342,11 @@ def _loadTelegramModule():
 	try:
 		spec = importlib.util.spec_from_file_location("telegram_app_module_under_test", MODULE_PATH)
 		module = importlib.util.module_from_spec(spec)
-		module._ = lambda message: message
 		assert spec.loader is not None
 		spec.loader.exec_module(module)
+		if executeTwice:
+			spec.loader.exec_module(module)
+		module._testAddonHandler = addonHandler
 		module._testApi = api
 		module._testCore = core
 		module._testDisplayModel = displayModel
@@ -355,6 +368,11 @@ class TelegramAppModuleTests(unittest.TestCase):
 		chatList = _FakeUIA(role=_Role.LIST, name="聊天", className="class Dialogs::InnerWidget")
 
 		self.assertTrue(self.module.isTelegramChatList(chatList))
+
+	def test_qualified_module_reload_does_not_reinitialize_translation(self):
+		module = _loadTelegramModule(executeTwice=True)
+
+		self.assertEqual(module._testAddonHandler.translationCalls, 1)
 
 	def test_chat_list_detection_does_not_depend_on_accessible_name(self):
 		chatList = _FakeUIA(role=_Role.LIST, name="Chats", className="class Settings::InnerWidget")

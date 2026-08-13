@@ -29,6 +29,7 @@ Adds Alt+1 to move focus to the chat list, Alt+M to open Telegram's main menu, C
 
 pythonSources: list[str] = [
 	"addon/appModules/*.py",
+	"addon/globalPlugins/*.py",
 ]
 i18nSources: list[str] = pythonSources + ["buildVars.py"]
 excludedFiles: list[str] = [
