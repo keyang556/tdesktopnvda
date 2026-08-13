@@ -976,6 +976,12 @@ class TelegramAppModuleTests(unittest.TestCase):
 		self.assertEqual(redacted, "https://example.com")
 		self.assertNotIn("secret", redacted)
 
+	def test_logging_never_records_the_credentials_in_a_link(self):
+		redacted = self.module._redactedLink("https://user:password@example.com/path")
+
+		self.assertEqual(redacted, "https://example.com")
+		self.assertNotIn("password", redacted)
+
 	def test_file_paths_in_message_text_become_openable_targets(self):
 		text = (
 			"Local C:\\Users\\me\\Reports\\q3.pdf and "
