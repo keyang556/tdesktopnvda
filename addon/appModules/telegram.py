@@ -169,6 +169,17 @@ class _MessageTarget(NamedTuple):
 	value: object
 
 
+def _paintedTitleBaseline(context: _ChatSwitchContext) -> str:
+	"""What a painted or recognised title has to differ from to count as new.
+
+	The display model cannot always be read at the moment the switch starts.
+	An empty baseline would make the first readable painted title look new even
+	when it still shows the chat the user just left, so the chat name from the
+	window title stands in; both are bare chat names.
+	"""
+	return context.previousPaintedTitle or context.previousWindowTitle
+
+
 def _safeStringAttribute(obj: object, attribute: str) -> str:
 	try:
 		value = getattr(obj, attribute)
@@ -818,7 +829,7 @@ def _handleChatTitleRecognition(
 	if context.generation != _chatSwitchGeneration or _telegramWindow(context) is None:
 		return
 	title = _recognitionTitle(result)
-	if title and title != context.previousPaintedTitle:
+	if title and title != _paintedTitleBaseline(context):
 		ui.message(title)
 		return
 	if retriesRemaining > 0:
@@ -1163,7 +1174,7 @@ def _announceSwitchedChat(context: _ChatSwitchContext, retriesRemaining: int) ->
 	# Telegram does not update its top-level UIA name in every environment.
 	# Try its painted header even when a non-empty but stale window name exists.
 	title = _paintedChatTitle(root)
-	if title and title != context.previousPaintedTitle:
+	if title and title != _paintedTitleBaseline(context):
 		ui.message(title)
 		return
 	if _recognizePaintedChatTitle(root, context, retriesRemaining):

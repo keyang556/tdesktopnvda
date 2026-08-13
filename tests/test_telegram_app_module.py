@@ -809,6 +809,44 @@ class TelegramAppModuleTests(unittest.TestCase):
 
 		self.assertEqual(self.module._testUi.messages, [])
 
+	def test_control_tab_does_not_speak_a_painted_title_it_could_not_read_before(self):
+		# The display model was unreadable when the switch started, so the first
+		# painted title it does return proves nothing on its own; here it still
+		# shows the chat the user was already in.
+		window = _FakeUIA(name="Old chat - Telegram")
+		self.module._testApi.foregroundObject = window
+		painted = [""]
+		self.module._paintedChatTitle = lambda root: painted[0]
+		self.module._recognizePaintedChatTitle = lambda *args: False
+
+		class _Gesture:
+			def send(self):
+				painted[0] = "Old chat"
+
+		self.module.switchChat(_Gesture())
+		while self.module._testCore.calls:
+			_, callback, args = self.module._testCore.calls.pop(0)
+			callback(*args)
+
+		self.assertEqual(self.module._testUi.messages, [])
+
+	def test_control_tab_speaks_a_painted_title_that_differs_from_the_window_name(self):
+		window = _FakeUIA(name="Old chat - Telegram")
+		self.module._testApi.foregroundObject = window
+		painted = [""]
+		self.module._paintedChatTitle = lambda root: painted[0]
+		self.module._recognizePaintedChatTitle = lambda *args: False
+
+		class _Gesture:
+			def send(self):
+				painted[0] = "Saved Messages"
+
+		self.module.switchChat(_Gesture())
+		_, callback, args = self.module._testCore.calls.pop(0)
+		callback(*args)
+
+		self.assertEqual(self.module._testUi.messages, ["Saved Messages"])
+
 	def test_control_tab_stays_silent_when_only_the_unread_count_changed(self):
 		# Telegram's window title carries the global unread count, which moves
 		# on its own. Speaking that change would tell the user they had
