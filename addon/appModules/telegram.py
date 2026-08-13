@@ -51,6 +51,13 @@ _chatSwitchGeneration = 0
 _chatTitleRecognizer: UwpOcr | None = None
 
 
+class _ForegroundIdentity(NamedTuple):
+	"""Which foreground window a delayed callback belongs to."""
+
+	windowHandle: int | None
+	root: object
+
+
 class _ChatSwitchContext(NamedTuple):
 	"""What one Ctrl+Tab needs in order to announce its own result later.
 
@@ -61,7 +68,7 @@ class _ChatSwitchContext(NamedTuple):
 	"""
 
 	generation: int
-	windowHandle: int | None
+	identity: _ForegroundIdentity | None
 	previousWindowTitle: str
 	previousPaintedTitle: str
 
@@ -537,6 +544,21 @@ def _windowHandle(obj: object) -> int | None:
 	return value if isinstance(value, int) else None
 
 
+def _foregroundIdentity() -> _ForegroundIdentity | None:
+	"""Capture what the current foreground window is, for a later callback.
+
+	The window handle is the reliable half, but a provider need not expose one.
+	NVDA keeps a single foreground object until the foreground actually
+	changes, so the object itself identifies the window when its handle does
+	not, and a delayed announcement can still tell whether it is still reading
+	the window that switched chats.
+	"""
+	root = _foregroundObject()
+	if root is None:
+		return None
+	return _ForegroundIdentity(_windowHandle(root), root)
+
+
 class AppModule(appModuleHandler.AppModule):
 	@script(description=_("Move focus to chat list"), gesture="kb:alt+1")
 	def script_focusChatList(self, gesture: object) -> None:
@@ -585,12 +607,15 @@ def _telegramWindow(context: _ChatSwitchContext) -> object | None:
 	whatever took the foreground and announce it as the new chat, and aim the
 	display-model and OCR work at that window too.
 	"""
+	identity = context.identity
+	if identity is None:
+		return None
 	root = _foregroundObject()
 	if root is None:
 		return None
-	if context.windowHandle is not None and _windowHandle(root) != context.windowHandle:
-		return None
-	return root
+	if identity.windowHandle is not None:
+		return root if _windowHandle(root) == identity.windowHandle else None
+	return root if root is identity.root else None
 
 
 def _announceSwitchedChat(context: _ChatSwitchContext, retriesRemaining: int) -> None:
@@ -627,10 +652,14 @@ def switchChat(gesture: object) -> None:
 	root = _foregroundObject()
 	previousWindowTitle = _windowChatTitle(root) if root is not None else ""
 	previousPaintedTitle = _paintedChatTitle(root) if root is not None else ""
-	windowHandle = _windowHandle(root)
+	identity = _foregroundIdentity()
 	try:
 		cast(Any, gesture).send()
 	except Exception:
+		return
+	if identity is None:
+		# Without an originating window, a later callback could not tell
+		# Telegram apart from whatever else takes the foreground.
 		return
 	_chatSwitchGeneration += 1
 	core.callLater(
@@ -638,7 +667,7 @@ def switchChat(gesture: object) -> None:
 		_announceSwitchedChat,
 		_ChatSwitchContext(
 			_chatSwitchGeneration,
-			windowHandle,
+			identity,
 			previousWindowTitle,
 			previousPaintedTitle,
 		),

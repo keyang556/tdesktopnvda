@@ -623,6 +623,24 @@ class TelegramAppModuleTests(unittest.TestCase):
 			[(window, self.module.textInfos.POSITION_ALL, rect)],
 		)
 
+	def test_control_tab_abandons_the_announcement_without_a_window_handle(self):
+		# A provider that reports no window handle must not disable the guard.
+		window = _FakeUIA(name="Old chat", windowHandle=None)
+		self.module._testApi.foregroundObject = window
+		self.module._paintedChatTitle = lambda root: ""
+
+		class _Gesture:
+			def send(self):
+				pass
+
+		self.module.switchChat(_Gesture())
+		self.module._testApi.foregroundObject = _FakeUIA(name="Another application", windowHandle=None)
+		while self.module._testCore.calls:
+			_, callback, args = self.module._testCore.calls.pop(0)
+			callback(*args)
+
+		self.assertEqual(self.module._testUi.messages, [])
+
 	def test_control_tab_abandons_the_announcement_when_telegram_loses_focus(self):
 		window = _FakeUIA(name="Old chat", windowHandle=11)
 		self.module._testApi.foregroundObject = window
