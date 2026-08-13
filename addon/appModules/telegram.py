@@ -31,6 +31,12 @@ _RTTI_CLASS_PREFIXES = ("class ", "struct ")
 _CHAT_LIST_POINT_X_OFFSETS = (120, 200, 280)
 _CHAT_LIST_POINT_Y_FRACTIONS = (0.35, 0.55, 0.75)
 _MAX_UIA_PARENT_STEPS = 16
+# Roughly one second of 25 ms polls while waiting for Alt to be released.
+_MAX_ALT_RELEASE_POLLS = 40
+# The single in-flight main-menu close started by Alt+1, as
+# ``(token, windowHandle)``, or None when no close operation is pending.
+_pendingMainMenuClose: tuple[int, int | None] | None = None
+_mainMenuCloseCounter = 0
 
 
 def _safeStringAttribute(obj: object, attribute: str) -> str:
@@ -379,6 +385,19 @@ def _focusObject() -> object | None:
 		return None
 
 
+def _windowHandle(obj: object) -> int | None:
+	"""Return the top-level window handle backing an NVDA object."""
+	try:
+		value = getattr(obj, "windowHandle")
+	except Exception:
+		return None
+	return value if isinstance(value, int) else None
+
+
+def _foregroundWindowHandle() -> int | None:
+	return _windowHandle(_foregroundObject())
+
+
 class AppModule(appModuleHandler.AppModule):
 	@script(description=_("Move focus to chat list"), gesture="kb:alt+1")
 	def script_focusChatList(self, gesture: object) -> None:
@@ -395,28 +414,60 @@ class AppModule(appModuleHandler.AppModule):
 			ui.message(_("Main menu is not available"))
 
 
-def _focusChatListAfterClosingMainMenu() -> None:
+def _endPendingMainMenuClose(token: int) -> None:
+	global _pendingMainMenuClose
+	if _pendingMainMenuClose is not None and _pendingMainMenuClose[0] == token:
+		_pendingMainMenuClose = None
+
+
+def _focusChatListAfterClosingMainMenu(token: int, windowHandle: int | None) -> None:
 	"""Retry Alt+1 after Telegram has dismissed its modal main menu."""
-	focusChatList(closeMainMenu=False)
+	if _pendingMainMenuClose is None or _pendingMainMenuClose[0] != token:
+		return
+	_endPendingMainMenuClose(token)
+	focusChatList(closeMainMenu=False, windowHandle=windowHandle)
 
 
-def _closeMainMenuAndFocusChatList() -> None:
+def _closeMainMenuAndFocusChatList(
+	token: int,
+	windowHandle: int | None,
+	remainingPolls: int = _MAX_ALT_RELEASE_POLLS,
+) -> None:
 	"""Dismiss Telegram's main menu after Alt from Alt+1 is released."""
+	if _pendingMainMenuClose is None or _pendingMainMenuClose[0] != token:
+		# This chain was superseded or already finished.
+		return
+	if windowHandle is not None and _foregroundWindowHandle() != windowHandle:
+		# The window that started Alt+1 is no longer in the foreground, so
+		# neither Escape nor the chat-list search may be aimed at whatever
+		# replaced it.
+		_endPendingMainMenuClose(token)
+		return
 	if winUser.getAsyncKeyState(winUser.VK_MENU) & 0x8000:
-		core.callLater(25, _closeMainMenuAndFocusChatList)
+		if remainingPolls <= 0:
+			# Alt looks stuck down. Sending Escape now would reach Windows as
+			# Alt+Escape, so give up rather than wedging the shortcut.
+			_endPendingMainMenuClose(token)
+			return
+		core.callLater(25, _closeMainMenuAndFocusChatList, token, windowHandle, remainingPolls - 1)
 		return
 	currentFocus = _focusObject()
 	if currentFocus is not None and _automationIdContainsClass(currentFocus, _MAIN_MENU_CLASS_NAME):
 		try:
 			KeyboardInputGesture.fromName("escape").send()
 		except Exception:
+			_endPendingMainMenuClose(token)
 			ui.message(_("Chat list not found"))
 			return
-	core.callLater(100, _focusChatListAfterClosingMainMenu)
+	core.callLater(100, _focusChatListAfterClosingMainMenu, token, windowHandle)
 
 
-def focusChatList(*, closeMainMenu: bool = True) -> None:
+def focusChatList(*, closeMainMenu: bool = True, windowHandle: int | None = None) -> None:
 	"""Move focus to Telegram's selected or first chat row."""
+	global _pendingMainMenuClose, _mainMenuCloseCounter
+	if windowHandle is not None and _foregroundWindowHandle() != windowHandle:
+		# A delayed retry outlived the window that requested it.
+		return
 	currentFocus = _focusObject()
 	if (
 		closeMainMenu
@@ -428,7 +479,15 @@ def focusChatList(*, closeMainMenu: bool = True) -> None:
 		# from Alt+1 has actually been released before sending Escape;
 		# otherwise Windows interprets it as Alt+Escape and switches
 		# applications. Then retry once after Qt updates its accessibility tree.
-		core.callLater(25, _closeMainMenuAndFocusChatList)
+		# Auto-repeat fires this script many times while Alt+1 is held, so a
+		# single close operation is tracked instead of one polling chain per
+		# repeat; otherwise several callbacks each send Escape and the extra
+		# presses reach Telegram's back/cancel handling after the menu closed.
+		if _pendingMainMenuClose is not None:
+			return
+		_mainMenuCloseCounter += 1
+		_pendingMainMenuClose = (_mainMenuCloseCounter, _windowHandle(_foregroundObject()))
+		core.callLater(25, _closeMainMenuAndFocusChatList, *_pendingMainMenuClose)
 		return
 	try:
 		currentParent = currentFocus.parent

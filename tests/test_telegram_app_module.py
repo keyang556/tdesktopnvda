@@ -92,7 +92,9 @@ class _FakeUIA:
 		failQuery=False,
 		failAction=False,
 		failFocus=False,
+		windowHandle=1,
 	):
+		self.windowHandle = windowHandle
 		self.role = role
 		self.name = name
 		self.UIAClassName = className
@@ -365,12 +367,68 @@ class TelegramAppModuleTests(unittest.TestCase):
 			automationId="class Window::MainMenu.class Ui::IconButton",
 		)
 		self.module.winUser.getAsyncKeyState = lambda key: 0x8000
+		self.module.AppModule().script_focusChatList(None)
+		self.module._testCore.calls.clear()
+		token, windowHandle = self.module._pendingMainMenuClose
 
-		self.module._closeMainMenuAndFocusChatList()
+		self.module._closeMainMenuAndFocusChatList(token, windowHandle)
 
 		self.assertEqual(len(self.module._testCore.calls), 1)
 		_, callback, _args = self.module._testCore.calls[0]
 		self.assertIs(callback, self.module._closeMainMenuAndFocusChatList)
+
+	def test_held_alt_1_schedules_a_single_menu_close(self):
+		self.module._testApi.focusObject = _FakeUIA(
+			role=_Role.BUTTON,
+			automationId="class Window::MainMenu.class Ui::IconButton",
+		)
+		appModule = self.module.AppModule()
+
+		for _repeat in range(5):
+			appModule.script_focusChatList(None)
+
+		self.assertEqual(len(self.module._testCore.calls), 1)
+
+	def test_superseded_menu_close_callback_does_nothing(self):
+		self.module._testApi.focusObject = _FakeUIA(
+			role=_Role.BUTTON,
+			automationId="class Window::MainMenu.class Ui::IconButton",
+		)
+		self.module.AppModule().script_focusChatList(None)
+		token, windowHandle = self.module._pendingMainMenuClose
+		self.module._pendingMainMenuClose = None
+		self.module._testCore.calls.clear()
+
+		self.module._closeMainMenuAndFocusChatList(token, windowHandle)
+
+		self.assertEqual(self.module._testCore.calls, [])
+		self.assertEqual(self.module._testUi.messages, [])
+
+	def test_menu_close_is_abandoned_when_another_window_takes_the_foreground(self):
+		telegram = _FakeUIA(windowHandle=11)
+		self.module._testApi.foregroundObject = telegram
+		self.module._testApi.focusObject = _FakeUIA(
+			role=_Role.BUTTON,
+			automationId="class Window::MainMenu.class Ui::IconButton",
+			windowHandle=11,
+		)
+		self.module.AppModule().script_focusChatList(None)
+		token, windowHandle = self.module._pendingMainMenuClose
+		self.module._testCore.calls.clear()
+		self.module._testApi.foregroundObject = _FakeUIA(windowHandle=22)
+
+		self.module._closeMainMenuAndFocusChatList(token, windowHandle)
+
+		self.assertEqual(self.module._testCore.calls, [])
+		self.assertEqual(self.module._testUi.messages, [])
+		self.assertIsNone(self.module._pendingMainMenuClose)
+
+	def test_delayed_retry_is_abandoned_when_another_window_takes_the_foreground(self):
+		self.module._testApi.foregroundObject = _FakeUIA(windowHandle=22)
+
+		self.module.focusChatList(closeMainMenu=False, windowHandle=11)
+
+		self.assertEqual(self.module._testUi.messages, [])
 
 	def test_alt_1_reports_empty_chat_list(self):
 		self.module._testApi.foregroundObject = _FakeUIA(
