@@ -26,7 +26,11 @@ _SIDEBAR_BUTTON_CLASS_NAME = "Ui::SideBarButton"
 _RTTI_CLASS_PREFIXES = ("class ", "struct ")
 _MAIN_MENU_POINT_X_OFFSETS = (32, 56, 80)
 _MAIN_MENU_POINT_Y_OFFSETS = (52, 76, 100)
+# Telegram keeps its per-folder sidebar buttons inside a scrolled container,
+# while the menu button above them is not scrolled with the folder list.
+_SCROLLED_CONTAINER_CLASS_NAMES = ("Ui::ScrollArea", "Ui::ElasticScroll", "Ui::VerticalLayout")
 _MAX_UIA_PARENT_STEPS = 16
+_MAX_SIBLING_STEPS = 32
 
 
 def _safeStringAttribute(obj: object, attribute: str) -> str:
@@ -261,23 +265,72 @@ def _findTelegramMainMenuButton(root: object) -> Any | None:
 	)
 
 
+def _rawViewWalker() -> Any | None:
+	try:
+		client: Any = _uiaHandler().clientObject
+		return client.RawViewWalker
+	except Exception:
+		return None
+
+
+def _rawNormalizedClassName(element: Any) -> str:
+	className = _rawElementProperty(element, UIAHandler.UIA_ClassNamePropertyId)
+	return _normalizedRttiClassName(className) if isinstance(className, str) else ""
+
+
+def _rawAutomationIdClassNames(element: Any) -> tuple[str, ...]:
+	"""Return the RTTI class components of an element's UIA AutomationId."""
+	automationId = _rawElementProperty(element, UIAHandler.UIA_AutomationIdPropertyId)
+	if not isinstance(automationId, str):
+		return ()
+	return tuple(_normalizedRttiClassName(component) for component in automationId.split("."))
+
+
+def _isFirstElementOfClass(element: Any, className: str) -> bool:
+	"""Return True when no preceding raw-view sibling shares this class."""
+	walker = _rawViewWalker()
+	if walker is None:
+		return False
+	sibling = element
+	for _step in range(_MAX_SIBLING_STEPS):
+		try:
+			sibling = walker.GetPreviousSiblingElement(sibling)
+		except Exception:
+			return False
+		if sibling is None:
+			return True
+		if _rawNormalizedClassName(sibling) == className:
+			return False
+	return False
+
+
 def _isRawTelegramMainMenuButton(element: Any) -> bool:
+	"""Identify the menu button among the buttons that share its corner.
+
+	A point hit lands on whatever Telegram painted there, and the class name
+	alone does not separate the menu from its neighbours: the folder sidebar
+	fills the same column with one ``Ui::SideBarButton`` per chat folder, and
+	``Dialogs::Widget`` holds further ``Ui::IconButton``s. In both layouts the
+	menu button is the first of its class in its container and sits outside the
+	scrolled folder list, which is also the button the subtree lookup returns.
+	Anything that cannot be identified this way is rejected so the caller falls
+	back to that lookup instead of invoking the wrong action.
+	"""
 	if (
 		_rawElementProperty(element, UIAHandler.UIA_ControlTypePropertyId)
 		!= UIAHandler.UIA_ButtonControlTypeId
 		or _rawElementProperty(element, UIAHandler.UIA_IsOffscreenPropertyId) is not False
 	):
 		return False
-	className = _rawElementProperty(element, UIAHandler.UIA_ClassNamePropertyId)
-	if not isinstance(className, str):
+	className = _rawNormalizedClassName(element)
+	if className not in (_SIDEBAR_BUTTON_CLASS_NAME, _ICON_BUTTON_CLASS_NAME):
 		return False
-	className = _normalizedRttiClassName(className)
-	if className == _SIDEBAR_BUTTON_CLASS_NAME:
-		return True
-	if className != _ICON_BUTTON_CLASS_NAME:
+	automationClasses = _rawAutomationIdClassNames(element)
+	if any(component in _SCROLLED_CONTAINER_CLASS_NAMES for component in automationClasses):
 		return False
-	automationId = _rawElementProperty(element, UIAHandler.UIA_AutomationIdPropertyId)
-	return isinstance(automationId, str) and _DIALOGS_WIDGET_CLASS_NAME in automationId
+	if className == _ICON_BUTTON_CLASS_NAME and _DIALOGS_WIDGET_CLASS_NAME not in automationClasses:
+		return False
+	return _isFirstElementOfClass(element, className)
 
 
 def _findTelegramMainMenuButtonFromPoints(root: object) -> Any | None:
