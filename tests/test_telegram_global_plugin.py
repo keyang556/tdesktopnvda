@@ -47,6 +47,7 @@ class _FakeObject:
 		providerName="",
 		exposedName=None,
 		appName="telegram",
+		children=(),
 	):
 		self.appModule = types.SimpleNamespace(appName=appName)
 		self.UIAAutomationId = automationId
@@ -54,6 +55,7 @@ class _FakeObject:
 		self.UIAElement = _FakeElement(providerName)
 		self.role = role
 		self.name = providerName if exposedName is None else exposedName
+		self.children = tuple(children)
 
 
 def _loadGlobalPluginModule():
@@ -379,6 +381,83 @@ class TelegramGlobalPluginTests(unittest.TestCase):
 		self.module.GlobalPlugin().event_gainFocus(obj, lambda: None)
 
 		self.assertEqual(obj.name, "Review new login")
+
+	def test_class_chain_provider_name_does_not_block_the_label(self):
+		chain = "class MainWindow.class Dialogs::Widget.class Dialogs::TopBarSuggestionContent"
+		obj = _FakeObject(
+			automationId=chain,
+			className="class Dialogs::TopBarSuggestionContent",
+			role=_Role.BUTTON,
+			providerName=chain,
+		)
+
+		self.module.GlobalPlugin().event_gainFocus(obj, lambda: None)
+
+		self.assertEqual(obj.name, "translated:Telegram suggestion")
+
+	def test_top_bar_suggestion_is_named_from_its_own_text(self):
+		obj = _FakeObject(
+			automationId=("class MainWindow.class Dialogs::Widget.class Dialogs::TopBarSuggestionContent"),
+			className="class Dialogs::TopBarSuggestionContent",
+			role=_Role.BUTTON,
+			children=[
+				_FakeObject(className="class Ui::FlatLabel", exposedName="Your Premium expires soon"),
+				_FakeObject(
+					className="class Ui::RpWidget",
+					exposedName="",
+					children=[_FakeObject(exposedName="Renew now")],
+				),
+			],
+		)
+
+		self.module.GlobalPlugin().event_gainFocus(obj, lambda: None)
+
+		self.assertEqual(obj.name, "Your Premium expires soon, Renew now")
+
+	def test_suggestion_text_ignores_class_chain_labels_and_repeats(self):
+		obj = _FakeObject(
+			automationId=("class MainWindow.class Dialogs::Widget.class Dialogs::TopBarSuggestionContent"),
+			className="class Dialogs::TopBarSuggestionContent",
+			role=_Role.BUTTON,
+			children=[
+				_FakeObject(exposedName="class Ui::FlatLabel"),
+				_FakeObject(exposedName="Set your birthday"),
+				_FakeObject(exposedName="Set your birthday"),
+			],
+		)
+
+		self.module.GlobalPlugin().event_gainFocus(obj, lambda: None)
+
+		self.assertEqual(obj.name, "Set your birthday")
+
+	def test_unknown_control_stops_announcing_its_class_chain(self):
+		chain = "class MainWindow.class Ui::RpWidget.class Ui::IconButton"
+		obj = _FakeObject(automationId=chain, className="class Ui::IconButton", role=_Role.BUTTON)
+		obj.name = chain
+
+		self.module.GlobalPlugin().event_gainFocus(obj, lambda: None)
+
+		self.assertEqual(obj.name, "")
+
+	def test_a_real_name_containing_dots_is_left_alone(self):
+		obj = _FakeObject(
+			automationId="class MainWindow.class Ui::RpWidget",
+			className="class Ui::RpWidget",
+			role=_Role.BUTTON,
+			providerName="holiday.photo.jpg",
+		)
+
+		self.module.GlobalPlugin().event_gainFocus(obj, lambda: None)
+
+		self.assertEqual(obj.name, "holiday.photo.jpg")
+
+	def test_rtti_class_chain_detection(self):
+		self.assertTrue(self.module._isRttiClassChain("class Ui::IconButton"))
+		self.assertTrue(self.module._isRttiClassChain("class MainWindow.struct Dialogs::Widget"))
+		self.assertFalse(self.module._isRttiClassChain(""))
+		self.assertFalse(self.module._isRttiClassChain("Send a Gift"))
+		self.assertFalse(self.module._isRttiClassChain("class of 99"))
+		self.assertFalse(self.module._isRttiClassChain("class MainWindow.Send a Gift"))
 
 
 if __name__ == "__main__":
