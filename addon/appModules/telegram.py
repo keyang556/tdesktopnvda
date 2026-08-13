@@ -7,7 +7,8 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+import re
+from typing import Any, NamedTuple, cast
 
 import api
 import appModuleHandler
@@ -21,6 +22,7 @@ from NVDAObjects.UIA import UIA
 import queueHandler
 import screenBitmap
 from scriptHandler import script
+import textInfos
 import ui
 import UIAHandler
 
@@ -39,10 +41,29 @@ _CHAT_TITLE_FORMATTING_TRANSLATION = str.maketrans(
 	"",
 	"\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069",
 )
+# Telegram prefixes its window title with the unread count and appends its own
+# application name; the painted header and OCR expose neither.
+_UNREAD_COUNT_PREFIX = re.compile(r"^\(\d+\)\s*")
+_WINDOW_TITLE_SUFFIX = re.compile(r"\s*[-\u2013\u2014]\s*Telegram(?:\s+Desktop)?$")
 
 
 _chatSwitchGeneration = 0
 _chatTitleRecognizer: UwpOcr | None = None
+
+
+class _ChatSwitchContext(NamedTuple):
+	"""What one Ctrl+Tab needs in order to announce its own result later.
+
+	Each title source is kept separately: the window name carries decorations
+	that the painted header and OCR never show, so comparing a title against
+	the previous value of a *different* source reports a change that did not
+	happen and announces the chat the user just left.
+	"""
+
+	generation: int
+	windowHandle: int | None
+	previousWindowTitle: str
+	previousPaintedTitle: str
 
 
 def _safeStringAttribute(obj: object, attribute: str) -> str:
@@ -319,18 +340,39 @@ def _chatTitleRect(root: object) -> RectLTRB | None:
 		return None
 
 
+def _firstNonEmptyLine(text: str) -> str:
+	lines = (_normalizedTitleText(line) for line in text.splitlines())
+	return next((line for line in lines if line), "")
+
+
+def _normalizedTitleText(value: str) -> str:
+	"""Drop the bidirectional formatting Telegram wraps around chat names."""
+	return value.translate(_CHAT_TITLE_FORMATTING_TRANSLATION).strip()
+
+
+def _chatNameFromWindowTitle(value: str) -> str:
+	"""Reduce a window title to the bare chat name the other sources report."""
+	value = _normalizedTitleText(value)
+	value = _UNREAD_COUNT_PREFIX.sub("", value)
+	return _WINDOW_TITLE_SUFFIX.sub("", value).strip()
+
+
 def _paintedChatTitle(root: object) -> str:
 	"""Read Telegram's painted conversation title through NVDA's display model."""
 	rect = _chatTitleRect(root)
 	if rect is None:
 		return ""
 	try:
+		# DisplayModelTextInfo takes a text position, and confines itself to the
+		# chat-title rectangle through its limit rectangle. Passing the
+		# rectangle as the position raises, which would silently reduce this to
+		# an empty result on every machine.
 		info = displayModel.DisplayModelTextInfo(
 			root,
-			rect,
+			textInfos.POSITION_ALL,
+			limitRect=rect,
 		)
-		lines = (line.strip() for line in info.text.splitlines())
-		return next((line for line in lines if line), "")
+		return _firstNonEmptyLine(info.text)
 	except Exception:
 		return ""
 
@@ -348,46 +390,42 @@ def _windowChatTitle(root: object) -> str:
 		name = _safeStringAttribute(root, "name")
 	if not isinstance(name, str):
 		return ""
-	return name.translate(_CHAT_TITLE_FORMATTING_TRANSLATION).strip()
+	return _chatNameFromWindowTitle(name)
 
 
 def _recognitionTitle(result: RecognitionResult | Exception) -> str:
 	if isinstance(result, Exception):
 		return ""
 	try:
-		lines = (line.strip() for line in result.text.splitlines())
+		return _firstNonEmptyLine(result.text)
 	except Exception:
 		return ""
-	return next((line for line in lines if line), "")
 
 
 def _handleChatTitleRecognition(
 	result: RecognitionResult | Exception,
-	generation: int,
-	previousTitle: str,
+	context: _ChatSwitchContext,
 	retriesRemaining: int,
 ) -> None:
 	"""Handle the asynchronous OCR result on NVDA's main event queue."""
-	if generation != _chatSwitchGeneration:
+	if context.generation != _chatSwitchGeneration or _telegramWindow(context) is None:
 		return
 	title = _recognitionTitle(result)
-	if title and title != previousTitle:
+	if title and title != context.previousPaintedTitle:
 		ui.message(title)
 		return
 	if retriesRemaining > 0:
 		core.callLater(
 			_CHAT_SWITCH_ANNOUNCEMENT_RETRY_MS,
 			_announceSwitchedChat,
-			generation,
-			previousTitle,
+			context,
 			retriesRemaining - 1,
 		)
 
 
 def _recognizePaintedChatTitle(
 	root: object,
-	generation: int,
-	previousTitle: str,
+	context: _ChatSwitchContext,
 	retriesRemaining: int,
 ) -> bool:
 	"""Start Windows OCR for Telegram's small painted title rectangle."""
@@ -426,8 +464,7 @@ def _recognizePaintedChatTitle(
 			queueHandler.eventQueue,
 			_handleChatTitleRecognition,
 			result,
-			generation,
-			previousTitle,
+			context,
 			retriesRemaining,
 		)
 
@@ -491,6 +528,15 @@ def _focusObject() -> object | None:
 		return None
 
 
+def _windowHandle(obj: object) -> int | None:
+	"""Return the top-level window handle backing an NVDA object."""
+	try:
+		value = getattr(obj, "windowHandle")
+	except Exception:
+		return None
+	return value if isinstance(value, int) else None
+
+
 class AppModule(appModuleHandler.AppModule):
 	@script(description=_("Move focus to chat list"), gesture="kb:alt+1")
 	def script_focusChatList(self, gesture: object) -> None:
@@ -531,39 +577,46 @@ class AppModule(appModuleHandler.AppModule):
 		switchChat(gesture)
 
 
-def _announceSwitchedChat(
-	generation: int,
-	previousTitle: str,
-	retriesRemaining: int,
-) -> None:
-	"""Wait for Telegram's window title to update, then announce it."""
-	if generation != _chatSwitchGeneration:
-		return
+def _telegramWindow(context: _ChatSwitchContext) -> object | None:
+	"""Return the foreground window only while it is the one that switched.
+
+	Every announcement here runs after a delay, a retry, or an OCR round trip.
+	Alt+Tab during any of those would otherwise make this read the title of
+	whatever took the foreground and announce it as the new chat, and aim the
+	display-model and OCR work at that window too.
+	"""
 	root = _foregroundObject()
-	title = _windowChatTitle(root) if root is not None else ""
-	if title and title != previousTitle:
+	if root is None:
+		return None
+	if context.windowHandle is not None and _windowHandle(root) != context.windowHandle:
+		return None
+	return root
+
+
+def _announceSwitchedChat(context: _ChatSwitchContext, retriesRemaining: int) -> None:
+	"""Wait for Telegram's window title to update, then announce it."""
+	if context.generation != _chatSwitchGeneration:
+		return
+	root = _telegramWindow(context)
+	if root is None:
+		return
+	title = _windowChatTitle(root)
+	if title and title != context.previousWindowTitle:
 		ui.message(title)
 		return
 	# Telegram does not update its top-level UIA name in every environment.
 	# Try its painted header even when a non-empty but stale window name exists.
-	if root is not None:
-		title = _paintedChatTitle(root)
-	if title and title != previousTitle:
+	title = _paintedChatTitle(root)
+	if title and title != context.previousPaintedTitle:
 		ui.message(title)
 		return
-	if root is not None and _recognizePaintedChatTitle(
-		root,
-		generation,
-		previousTitle,
-		retriesRemaining,
-	):
+	if _recognizePaintedChatTitle(root, context, retriesRemaining):
 		return
 	if retriesRemaining > 0:
 		core.callLater(
 			_CHAT_SWITCH_ANNOUNCEMENT_RETRY_MS,
 			_announceSwitchedChat,
-			generation,
-			previousTitle,
+			context,
 			retriesRemaining - 1,
 		)
 
@@ -572,19 +625,22 @@ def switchChat(gesture: object) -> None:
 	"""Pass through Telegram's chat switch, then announce its new chat name."""
 	global _chatSwitchGeneration
 	root = _foregroundObject()
-	previousTitle = _windowChatTitle(root) if root is not None else ""
-	if not previousTitle and root is not None:
-		previousTitle = _paintedChatTitle(root)
+	previousWindowTitle = _windowChatTitle(root) if root is not None else ""
+	previousPaintedTitle = _paintedChatTitle(root) if root is not None else ""
+	windowHandle = _windowHandle(root)
 	try:
 		cast(Any, gesture).send()
 	except Exception:
 		return
 	_chatSwitchGeneration += 1
-	generation = _chatSwitchGeneration
 	core.callLater(
 		_CHAT_SWITCH_ANNOUNCEMENT_DELAY_MS,
 		_announceSwitchedChat,
-		generation,
-		previousTitle,
+		_ChatSwitchContext(
+			_chatSwitchGeneration,
+			windowHandle,
+			previousWindowTitle,
+			previousPaintedTitle,
+		),
 		_CHAT_SWITCH_ANNOUNCEMENT_RETRIES,
 	)
