@@ -580,6 +580,28 @@ class TelegramAppModuleTests(unittest.TestCase):
 
 		self.assertEqual(self.module._testUi.messages, [])
 
+	def test_a_second_switch_retires_the_first_switch_announcement(self):
+		# The second switch announces nothing itself, but the first one must
+		# not get to speak the chat the user has already left behind.
+		window = _FakeUIA(name="Old chat")
+		self.module._testApi.foregroundObject = window
+		self.module._paintedChatTitle = lambda root: ""
+
+		class _Gesture:
+			def send(self):
+				pass
+
+		self.module.switchChat(_Gesture())
+		pending = list(self.module._testCore.calls)
+		self.module._testCore.calls.clear()
+		window.name = ""
+		self.module.switchChat(_Gesture())
+		window.name = "Saved Messages"
+		for _delay, callback, args in pending:
+			callback(*args)
+
+		self.assertEqual(self.module._testUi.messages, [])
+
 	def test_control_tab_announces_nothing_when_no_title_could_be_read_first(self):
 		# With no readable title before the switch there is nothing for a later
 		# one to prove, so the first title that does arrive is not announced.

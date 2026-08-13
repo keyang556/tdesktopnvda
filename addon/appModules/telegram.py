@@ -683,6 +683,10 @@ def switchChat(gesture: object) -> None:
 		cast(Any, gesture).send()
 	except Exception:
 		return
+	# Telegram has moved on, so whatever a previous switch still has in flight
+	# now describes a chat the user has already left. Retire it here, before
+	# any reason this switch might have to announce nothing itself.
+	_chatSwitchGeneration += 1
 	if identity is None:
 		# Without an originating window, a later callback could not tell
 		# Telegram apart from whatever else takes the foreground.
@@ -692,7 +696,6 @@ def switchChat(gesture: object) -> None:
 		# proves a change: the first title that does arrive may still be the
 		# chat the user just left, and announcing it would name the wrong one.
 		return
-	_chatSwitchGeneration += 1
 	core.callLater(
 		_CHAT_SWITCH_ANNOUNCEMENT_DELAY_MS,
 		_announceSwitchedChat,
