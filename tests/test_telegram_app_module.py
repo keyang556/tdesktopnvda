@@ -495,6 +495,126 @@ class TelegramAppModuleTests(unittest.TestCase):
 			("https://www.example.com", "mailto:Help@Example.com", "https://EXAMPLE.com"),
 		)
 
+	def test_link_deduplication_keeps_case_sensitive_url_components(self):
+		text = "https://example.com/User and https://example.com/user"
+
+		self.assertEqual(
+			self.module.linksFromMessageText(text),
+			("https://example.com/User", "https://example.com/user"),
+		)
+
+	def test_link_extraction_recognizes_scheme_less_telegram_links(self):
+		self.assertEqual(
+			self.module.linksFromMessageText("Read example.com/path?q=1 today"),
+			("https://example.com/path?q=1",),
+		)
+		self.assertEqual(
+			self.module.linksFromMessageText("Read example.com today"),
+			("https://example.com",),
+		)
+		self.assertEqual(
+			self.module.linksFromMessageText("Deploy to my-host.example.co.uk now"),
+			("https://my-host.example.co.uk",),
+		)
+
+	def test_link_extraction_does_not_treat_a_file_name_as_a_domain(self):
+		self.assertEqual(self.module.linksFromMessageText("Here is report.pdf"), ())
+		self.assertEqual(
+			[target.kind for target in self.module.targetsFromMessageText("Here is report.pdf")],
+			["attachment"],
+		)
+
+	def test_logging_never_records_the_path_or_query_of_a_link(self):
+		redacted = self.module._redactedLink("https://example.com/reset?token=secret#part")
+
+		self.assertEqual(redacted, "https://example.com")
+		self.assertNotIn("secret", redacted)
+
+	def test_file_paths_in_message_text_become_openable_targets(self):
+		text = (
+			"Local C:\\Users\\me\\Reports\\q3.pdf and "
+			"\\\\server\\share\\notes.txt and "
+			"file:///C:/Users/me/plan%20b.txt"
+		)
+
+		self.assertEqual(
+			[(target.kind, target.value) for target in self.module.targetsFromMessageText(text)],
+			[
+				("file", "C:\\Users\\me\\Reports\\q3.pdf"),
+				("file", "\\\\server\\share\\notes.txt"),
+				("file", "C:\\Users\\me\\plan b.txt"),
+			],
+		)
+
+	def test_attachment_file_name_is_read_from_a_telegram_document_name(self):
+		self.assertEqual(
+			self.module._attachmentFileName("Quarterly report.pdf, 1.2 MB"),
+			"Quarterly report.pdf",
+		)
+		self.assertEqual(self.module._attachmentFileName("A message without a document"), "")
+
+	def test_control_enter_offers_the_attachment_of_the_focused_message(self):
+		document = _FakeUIA(name="Quarterly report.pdf, 1.2 MB")
+		message = _FakeUIA(role=_Role.LISTITEM, name="Here it is", children=[document])
+		_FakeUIA(role=_Role.LIST, automationId="ChatsList", children=[message])
+		self.module._testApi.focusObject = message
+
+		targets = self.module.messageTargets(message)
+
+		self.assertEqual(
+			[(target.kind, target.label) for target in targets],
+			[("attachment", "Quarterly report.pdf")],
+		)
+		self.assertIs(targets[0].value, document)
+
+	def test_downloaded_attachment_is_opened_from_disk(self):
+		opened = []
+		self.module._downloadedAttachmentPath = lambda name: "C:\\Downloads\\report.pdf"
+		self.module._openLocalFile = lambda path: opened.append(path) or True
+		document = _FakeUIA(name="report.pdf")
+
+		self.module._openMessageAttachment(self.module._MessageTarget("attachment", "report.pdf", document))
+
+		self.assertEqual(opened, ["C:\\Downloads\\report.pdf"])
+		self.assertEqual(document.actionCount, 0)
+
+	def test_attachment_that_is_not_downloaded_is_opened_through_telegram(self):
+		self.module._downloadedAttachmentPath = lambda name: ""
+		document = _FakeUIA(name="report.pdf")
+
+		self.module._openMessageAttachment(self.module._MessageTarget("attachment", "report.pdf", document))
+
+		self.assertEqual(document.actionCount, 1)
+		self.assertEqual(self.module._testUi.messages, [])
+
+	def test_attachment_without_a_download_or_provider_action_is_reported(self):
+		self.module._downloadedAttachmentPath = lambda name: ""
+
+		self.module._openMessageAttachment(self.module._MessageTarget("attachment", "report.pdf", None))
+
+		self.assertEqual(self.module._testUi.messages, ["File is not downloaded yet"])
+
+	def test_control_enter_offers_links_and_files_together(self):
+		document = _FakeUIA(name="report.pdf, 1.2 MB")
+		message = _FakeUIA(
+			role=_Role.LISTITEM,
+			name="See https://example.com/docs and report.pdf",
+			children=[document],
+		)
+		_FakeUIA(role=_Role.LIST, automationId="ChatsList", children=[message])
+		self.module._testApi.focusObject = message
+
+		self.module.AppModule().script_showMessageLinks(None)
+
+		_, callback, args = self.module._testCore.calls[0]
+		self.assertIs(callback, self.module._showMessageLinksMenu)
+		self.assertEqual(
+			[(target.kind, target.label) for target in args[0]],
+			[("link", "https://example.com/docs"), ("attachment", "report.pdf")],
+		)
+		# The named attachment resolves to the object Telegram can act on.
+		self.assertIs(args[0][1].value, document)
+
 	def test_control_enter_shows_all_links_from_unigram_message(self):
 		message = _FakeUIA(
 			role=_Role.LISTITEM,
@@ -516,7 +636,10 @@ class TelegramAppModuleTests(unittest.TestCase):
 		self.assertEqual(len(self.module._testCore.calls), 1)
 		_, callback, args = self.module._testCore.calls[0]
 		self.assertIs(callback, self.module._showMessageLinksMenu)
-		self.assertEqual(args, (("https://one.example/path", "https://two.example/path"),))
+		self.assertEqual(
+			[target.label for target in args[0]],
+			["https://one.example/path", "https://two.example/path"],
+		)
 
 	def test_control_enter_supports_qt_history_message_list(self):
 		message = _FakeUIA(role=_Role.LISTITEM, name="https://example.com")
@@ -606,9 +729,13 @@ class TelegramAppModuleTests(unittest.TestCase):
 		sys.modules["gui"] = gui
 		sys.modules["wx"] = wx
 		opened = []
-		self.module._openMessageLink = opened.append
+		self.module._openMessageTarget = lambda target: opened.append(target.label)
+		targets = (
+			self.module._MessageTarget("link", "https://one.example", "https://one.example"),
+			self.module._MessageTarget("link", "https://two.example", "https://two.example"),
+		)
 		try:
-			self.module._showMessageLinksMenu(("https://one.example", "https://two.example"))
+			self.module._showMessageLinksMenu(targets)
 			dialog.bindings[(wx.EVT_LISTBOX, None)](_SelectionEvent())
 			dialog.bindings[(wx.EVT_BUTTON, wx.ID_OK)](object())
 		finally:
@@ -630,7 +757,7 @@ class TelegramAppModuleTests(unittest.TestCase):
 
 		self.module.AppModule().script_showMessageLinks(None)
 
-		self.assertEqual(self.module._testUi.messages, ["No links in this message"])
+		self.assertEqual(self.module._testUi.messages, ["No links or files in this message"])
 		self.assertEqual(self.module._testCore.calls, [])
 
 	def test_control_enter_passes_through_outside_message_list(self):
