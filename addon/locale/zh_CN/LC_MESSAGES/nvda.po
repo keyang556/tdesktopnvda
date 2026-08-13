@@ -44,3 +44,27 @@ msgstr "主菜单不可用"
 
 msgid "Switch chats and announce the chat name"
 msgstr "切换聊天并读出聊天名称"
+
+msgid "Main menu"
+msgstr "主菜单"
+
+msgid "Profile"
+msgstr "个人资料"
+
+msgid "Accounts"
+msgstr "帐户"
+
+msgid "Menu item"
+msgstr "菜单项"
+
+msgid "Emoji, stickers, and GIFs"
+msgstr "表情符号、贴纸和 GIF"
+
+msgid "Record voice message"
+msgstr "录制语音消息"
+
+msgid "Telegram suggestion"
+msgstr "Telegram 建议"
+
+msgid "Dismiss suggestion"
+msgstr "关闭建议"

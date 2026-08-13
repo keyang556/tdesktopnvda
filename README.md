@@ -10,8 +10,9 @@ Telegram Desktop Accessibility is an NVDA add-on for Telegram Desktop on Windows
 * `Alt+M` opens Telegram's main menu.
 * `Ctrl+Tab` and `Ctrl+Shift+Tab` keep Telegram's native chat switching and announce the newly active chat title.
 * `Ctrl+Enter` on a focused message opens whatever the message holds: its links, the file paths it mentions, and the documents attached to it. A single item opens immediately, and anything more is offered in an accessible chooser in reading order. An attachment already downloaded is opened from Telegram's download folder; otherwise Telegram is asked to download and open it. Outside a message, Telegram's own `Ctrl+Enter` behavior is passed through untouched.
+* Structural main-menu controls such as Profile and Accounts, and composer controls Telegram leaves unnamed, receive useful accessible labels.
 * Chat detection uses Telegram's stable UIA class information rather than a translated control name, so the commands do not depend on Telegram's interface language.
-* Telegram continues to provide the names of chats, messages, buttons, and list items. The add-on does not replace or rewrite them.
+* Telegram continues to provide the names of chats, messages, buttons, and list items. The add-on changes names only for known controls that Telegram leaves unlabeled.
 
 ## Usage
 
