@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 import api
 import appModuleHandler
@@ -33,10 +33,24 @@ _CHAT_LIST_POINT_Y_FRACTIONS = (0.35, 0.55, 0.75)
 _MAX_UIA_PARENT_STEPS = 16
 # Roughly one second of 25 ms polls while waiting for Alt to be released.
 _MAX_ALT_RELEASE_POLLS = 40
-# The single in-flight main-menu close started by Alt+1, as
-# ``(token, windowHandle)``, or None when no close operation is pending.
-_pendingMainMenuClose: tuple[int, int | None] | None = None
 _mainMenuCloseCounter = 0
+
+
+class _ForegroundIdentity(NamedTuple):
+	"""Which foreground window a delayed callback belongs to."""
+
+	windowHandle: int | None
+	root: object
+
+
+class _PendingMainMenuClose(NamedTuple):
+	"""The single main-menu close operation Alt+1 may have in flight."""
+
+	token: int
+	identity: _ForegroundIdentity | None
+
+
+_pendingMainMenuClose: _PendingMainMenuClose | None = None
 
 
 def _safeStringAttribute(obj: object, attribute: str) -> str:
@@ -394,8 +408,31 @@ def _windowHandle(obj: object) -> int | None:
 	return value if isinstance(value, int) else None
 
 
-def _foregroundWindowHandle() -> int | None:
-	return _windowHandle(_foregroundObject())
+def _foregroundIdentity() -> _ForegroundIdentity | None:
+	"""Capture what the current foreground window is, for a later callback.
+
+	The window handle is the reliable half, but a provider need not expose one.
+	NVDA keeps a single foreground object until the foreground actually
+	changes, so the object itself identifies the window when its handle does
+	not, and a delayed callback can still tell whether it is acting on the
+	window that scheduled it.
+	"""
+	root = _foregroundObject()
+	if root is None:
+		return None
+	return _ForegroundIdentity(_windowHandle(root), root)
+
+
+def _isStillForeground(identity: _ForegroundIdentity | None) -> bool:
+	"""Return True only while the captured window is still in the foreground."""
+	if identity is None:
+		return False
+	current = _foregroundObject()
+	if current is None:
+		return False
+	if identity.windowHandle is not None:
+		return _windowHandle(current) == identity.windowHandle
+	return current is identity.root
 
 
 class AppModule(appModuleHandler.AppModule):
@@ -416,28 +453,28 @@ class AppModule(appModuleHandler.AppModule):
 
 def _endPendingMainMenuClose(token: int) -> None:
 	global _pendingMainMenuClose
-	if _pendingMainMenuClose is not None and _pendingMainMenuClose[0] == token:
+	if _pendingMainMenuClose is not None and _pendingMainMenuClose.token == token:
 		_pendingMainMenuClose = None
 
 
-def _focusChatListAfterClosingMainMenu(token: int, windowHandle: int | None) -> None:
+def _focusChatListAfterClosingMainMenu(token: int, identity: _ForegroundIdentity | None) -> None:
 	"""Retry Alt+1 after Telegram has dismissed its modal main menu."""
-	if _pendingMainMenuClose is None or _pendingMainMenuClose[0] != token:
+	if _pendingMainMenuClose is None or _pendingMainMenuClose.token != token:
 		return
 	_endPendingMainMenuClose(token)
-	focusChatList(closeMainMenu=False, windowHandle=windowHandle)
+	focusChatList(closeMainMenu=False, identity=identity)
 
 
 def _closeMainMenuAndFocusChatList(
 	token: int,
-	windowHandle: int | None,
+	identity: _ForegroundIdentity | None,
 	remainingPolls: int = _MAX_ALT_RELEASE_POLLS,
 ) -> None:
 	"""Dismiss Telegram's main menu after Alt from Alt+1 is released."""
-	if _pendingMainMenuClose is None or _pendingMainMenuClose[0] != token:
+	if _pendingMainMenuClose is None or _pendingMainMenuClose.token != token:
 		# This chain was superseded or already finished.
 		return
-	if windowHandle is not None and _foregroundWindowHandle() != windowHandle:
+	if not _isStillForeground(identity):
 		# The window that started Alt+1 is no longer in the foreground, so
 		# neither Escape nor the chat-list search may be aimed at whatever
 		# replaced it.
@@ -449,7 +486,7 @@ def _closeMainMenuAndFocusChatList(
 			# Alt+Escape, so give up rather than wedging the shortcut.
 			_endPendingMainMenuClose(token)
 			return
-		core.callLater(25, _closeMainMenuAndFocusChatList, token, windowHandle, remainingPolls - 1)
+		core.callLater(25, _closeMainMenuAndFocusChatList, token, identity, remainingPolls - 1)
 		return
 	currentFocus = _focusObject()
 	if currentFocus is not None and _automationIdContainsClass(currentFocus, _MAIN_MENU_CLASS_NAME):
@@ -459,13 +496,13 @@ def _closeMainMenuAndFocusChatList(
 			_endPendingMainMenuClose(token)
 			ui.message(_("Chat list not found"))
 			return
-	core.callLater(100, _focusChatListAfterClosingMainMenu, token, windowHandle)
+	core.callLater(100, _focusChatListAfterClosingMainMenu, token, identity)
 
 
-def focusChatList(*, closeMainMenu: bool = True, windowHandle: int | None = None) -> None:
+def focusChatList(*, closeMainMenu: bool = True, identity: _ForegroundIdentity | None = None) -> None:
 	"""Move focus to Telegram's selected or first chat row."""
 	global _pendingMainMenuClose, _mainMenuCloseCounter
-	if windowHandle is not None and _foregroundWindowHandle() != windowHandle:
+	if identity is not None and not _isStillForeground(identity):
 		# A delayed retry outlived the window that requested it.
 		return
 	currentFocus = _focusObject()
@@ -485,8 +522,14 @@ def focusChatList(*, closeMainMenu: bool = True, windowHandle: int | None = None
 		# presses reach Telegram's back/cancel handling after the menu closed.
 		if _pendingMainMenuClose is not None:
 			return
+		originator = _foregroundIdentity()
+		if originator is None:
+			# Without an originating window there is nothing to aim Escape at,
+			# and no way to tell later whether Telegram is still in front.
+			ui.message(_("Chat list not found"))
+			return
 		_mainMenuCloseCounter += 1
-		_pendingMainMenuClose = (_mainMenuCloseCounter, _windowHandle(_foregroundObject()))
+		_pendingMainMenuClose = _PendingMainMenuClose(_mainMenuCloseCounter, originator)
 		core.callLater(25, _closeMainMenuAndFocusChatList, *_pendingMainMenuClose)
 		return
 	try:
