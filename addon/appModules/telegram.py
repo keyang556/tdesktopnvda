@@ -11,6 +11,7 @@ from typing import Any, cast
 
 import api
 import appModuleHandler
+from comInterfaces.UIAutomationClient import tagPOINT
 import controlTypes
 from NVDAObjects.UIA import UIA
 from scriptHandler import script
@@ -23,6 +24,9 @@ _DIALOGS_WIDGET_CLASS_NAME = "Dialogs::Widget"
 _ICON_BUTTON_CLASS_NAME = "Ui::IconButton"
 _SIDEBAR_BUTTON_CLASS_NAME = "Ui::SideBarButton"
 _RTTI_CLASS_PREFIXES = ("class ", "struct ")
+_MAIN_MENU_POINT_X_OFFSETS = (32, 56, 80)
+_MAIN_MENU_POINT_Y_OFFSETS = (52, 76, 100)
+_MAX_UIA_PARENT_STEPS = 16
 
 
 def _safeStringAttribute(obj: object, attribute: str) -> str:
@@ -33,13 +37,17 @@ def _safeStringAttribute(obj: object, attribute: str) -> str:
 	return value if isinstance(value, str) else ""
 
 
-def _normalizedClassName(obj: object) -> str:
-	"""Return a Windows RTTI class name without its MSVC ``class`` prefix."""
-	value = _safeStringAttribute(obj, "UIAClassName").strip()
+def _normalizedRttiClassName(value: str) -> str:
+	"""Return a Windows RTTI class name without its MSVC type prefix."""
+	value = value.strip()
 	for prefix in _RTTI_CLASS_PREFIXES:
 		if value.startswith(prefix):
 			return value[len(prefix) :]
 	return value
+
+
+def _normalizedClassName(obj: object) -> str:
+	return _normalizedRttiClassName(_safeStringAttribute(obj, "UIAClassName"))
 
 
 def _automationIdContainsClass(obj: object, className: str) -> bool:
@@ -160,6 +168,13 @@ def _findTelegramChatList(root: object) -> Any | None:
 	return _findFirstElement(element, UIAHandler.TreeScope_Subtree, conditions)
 
 
+def _rawElementProperty(element: Any, propertyId: int) -> object | None:
+	try:
+		return element.GetCurrentPropertyValue(propertyId)
+	except Exception:
+		return None
+
+
 def _findChatListItem(chatList: Any) -> Any | None:
 	"""Prefer the selected chat row, then the first direct chat-list item."""
 	try:
@@ -246,6 +261,62 @@ def _findTelegramMainMenuButton(root: object) -> Any | None:
 	)
 
 
+def _isRawTelegramMainMenuButton(element: Any) -> bool:
+	if (
+		_rawElementProperty(element, UIAHandler.UIA_ControlTypePropertyId)
+		!= UIAHandler.UIA_ButtonControlTypeId
+		or _rawElementProperty(element, UIAHandler.UIA_IsOffscreenPropertyId) is not False
+	):
+		return False
+	className = _rawElementProperty(element, UIAHandler.UIA_ClassNamePropertyId)
+	if not isinstance(className, str):
+		return False
+	className = _normalizedRttiClassName(className)
+	if className == _SIDEBAR_BUTTON_CLASS_NAME:
+		return True
+	if className != _ICON_BUTTON_CLASS_NAME:
+		return False
+	automationId = _rawElementProperty(element, UIAHandler.UIA_AutomationIdPropertyId)
+	return isinstance(automationId, str) and _DIALOGS_WIDGET_CLASS_NAME in automationId
+
+
+def _findTelegramMainMenuButtonFromPoints(root: object) -> Any | None:
+	"""Locate Telegram's top-left menu button without a subtree query."""
+	try:
+		location = root.location
+		if location.width <= 0 or location.height <= 0:
+			return None
+		client: Any = _uiaHandler().clientObject
+		walker = client.RawViewWalker
+	except Exception:
+		return None
+
+	for xOffset in _MAIN_MENU_POINT_X_OFFSETS:
+		x = round(location.left + min(xOffset, location.width * 0.25))
+		for yOffset in _MAIN_MENU_POINT_Y_OFFSETS:
+			y = round(location.top + min(yOffset, location.height * 0.25))
+			try:
+				element = client.ElementFromPoint(tagPOINT(x, y))
+				for _step in range(_MAX_UIA_PARENT_STEPS):
+					if element is None:
+						break
+					# Telegram places a transparent MenuUnderButton group over
+					# the actual icon button. In the raw UIA view, that button is
+					# the group's next sibling rather than its point-hit ancestor.
+					candidates = [element]
+					try:
+						candidates.append(walker.GetNextSiblingElement(element))
+					except Exception:
+						pass
+					for candidate in candidates:
+						if candidate is not None and _isRawTelegramMainMenuButton(candidate):
+							return candidate
+					element = walker.GetParentElement(element)
+			except Exception:
+				continue
+	return None
+
+
 def _sameUIAElement(left: Any, right: Any) -> bool:
 	if left is None or right is None:
 		return False
@@ -324,7 +395,9 @@ class AppModule(appModuleHandler.AppModule):
 	@script(description=_("Open main menu"), gesture="kb:alt+m")
 	def script_openMainMenu(self, gesture: object) -> None:
 		root = _foregroundObject()
-		button = _findTelegramMainMenuButton(root) if root is not None else None
+		button = _findTelegramMainMenuButtonFromPoints(root) if root is not None else None
+		if button is None and root is not None:
+			button = _findTelegramMainMenuButton(root)
 		if button is None:
 			ui.message(_("Main menu is not available"))
 			return

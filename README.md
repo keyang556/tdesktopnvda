@@ -19,7 +19,7 @@ If `Alt+1` cannot find a chat list or the list is empty, NVDA reports that condi
 
 ## Implementation
 
-Telegram Desktop's patched Qt accessibility provider exposes RTTI-based UIA class names. The add-on identifies the chat list as `Dialogs::InnerWidget`, allowing it to work independently of the localized accessible name. The main menu command locates Telegram's native menu button inside `Dialogs::Widget` and invokes its existing action.
+Telegram Desktop's patched Qt accessibility provider exposes RTTI-based UIA class names. The add-on identifies the chat list as `Dialogs::InnerWidget`, allowing it to work independently of the localized accessible name. The main menu command locates Telegram's native menu button inside `Dialogs::Widget`, or as the first `Ui::SideBarButton` in the folder-sidebar layout, and invokes its existing action. It finds that button by UIA point hit-testing near the top-left corner of the window, falling back to a provider-side subtree query.
 
 ## Keyboard Shortcuts
 

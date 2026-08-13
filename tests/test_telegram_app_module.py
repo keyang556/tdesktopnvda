@@ -217,9 +217,15 @@ def _loadTelegramModule():
 		baseCacheRequest=object(),
 	)
 
+	comInterfaces = types.ModuleType("comInterfaces")
+	uiaClient = types.ModuleType("comInterfaces.UIAutomationClient")
+	uiaClient.tagPOINT = lambda x, y: types.SimpleNamespace(x=x, y=y)
+
 	stubs = {
 		"api": api,
 		"appModuleHandler": appModuleHandler,
+		"comInterfaces": comInterfaces,
+		"comInterfaces.UIAutomationClient": uiaClient,
 		"controlTypes": controlTypes,
 		"NVDAObjects": nvdaObjects,
 		"NVDAObjects.UIA": uiaModule,
@@ -402,6 +408,34 @@ class TelegramAppModuleTests(unittest.TestCase):
 
 		self.assertEqual(sidebarMenu.actionCount, 1)
 		self.assertEqual(search.actionCount, 0)
+
+	def test_point_lookup_accepts_both_main_menu_layouts(self):
+		sidebarMenu = _FakeUIA(role=_Role.BUTTON, className="class Ui::SideBarButton")
+		dialogsMenu = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::IconButton",
+			automationId="class Dialogs::Widget.class Ui::RpWidget.class Ui::IconButton",
+		)
+
+		self.assertTrue(self.module._isRawTelegramMainMenuButton(sidebarMenu))
+		self.assertTrue(self.module._isRawTelegramMainMenuButton(dialogsMenu))
+
+	def test_point_lookup_rejects_offscreen_and_unrelated_buttons(self):
+		offscreen = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::SideBarButton",
+			isOffscreen=True,
+		)
+		unrelated = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::IconButton",
+			automationId="class Calls::Panel.class Ui::IconButton",
+		)
+		notAButton = _FakeUIA(role=_Role.LIST, className="class Ui::SideBarButton")
+
+		self.assertFalse(self.module._isRawTelegramMainMenuButton(offscreen))
+		self.assertFalse(self.module._isRawTelegramMainMenuButton(unrelated))
+		self.assertFalse(self.module._isRawTelegramMainMenuButton(notAButton))
 
 	def test_alt_m_ignores_offscreen_button(self):
 		button = _FakeUIA(
