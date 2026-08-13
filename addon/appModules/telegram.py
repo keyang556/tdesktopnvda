@@ -632,15 +632,18 @@ def _announceSwitchedChat(context: _ChatSwitchContext, retriesRemaining: int) ->
 	root = _telegramWindow(context)
 	if root is None:
 		return
-	# The whole window title decides whether Telegram has moved on, because
-	# reducing it first makes a switch between two chats of the same name look
-	# like no switch at all. Only what is spoken is reduced.
-	windowTitle = _windowTitle(root)
-	if windowTitle and windowTitle != context.previousWindowTitle:
-		chatName = _chatNameFromWindowTitle(windowTitle)
-		if chatName:
-			ui.message(chatName)
-			return
+	# Telegram's window title also carries the global unread count, which
+	# changes on its own while this waits. The chat name alone therefore
+	# decides whether to speak: announcing every raw title change would tell
+	# the user they had moved to another chat when a message merely arrived
+	# somewhere else and Ctrl+Tab had not moved at all. The cost is that a
+	# switch between two chats that share a name stays silent, which the title
+	# cannot distinguish from no switch; a wrong announcement about where the
+	# user is was judged worse than a missing one.
+	chatName = _windowChatTitle(root)
+	if chatName and chatName != context.previousWindowTitle:
+		ui.message(chatName)
+		return
 	# Telegram does not update its top-level UIA name in every environment.
 	# Try its painted header even when a non-empty but stale window name exists.
 	title = _paintedChatTitle(root)
@@ -662,7 +665,7 @@ def switchChat(gesture: object) -> None:
 	"""Pass through Telegram's chat switch, then announce its new chat name."""
 	global _chatSwitchGeneration
 	root = _foregroundObject()
-	previousWindowTitle = _windowTitle(root) if root is not None else ""
+	previousWindowTitle = _windowChatTitle(root) if root is not None else ""
 	previousPaintedTitle = _paintedChatTitle(root) if root is not None else ""
 	identity = _foregroundIdentity()
 	try:

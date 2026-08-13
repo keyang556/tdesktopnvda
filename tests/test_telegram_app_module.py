@@ -580,22 +580,25 @@ class TelegramAppModuleTests(unittest.TestCase):
 
 		self.assertEqual(self.module._testUi.messages, [])
 
-	def test_control_tab_announces_a_new_chat_that_shares_the_previous_name(self):
-		# Only the unread count separates the two titles, so a reduced title
-		# would compare equal and the switch would never be announced.
-		window = _FakeUIA(name="(3) Old chat")
+	def test_control_tab_stays_silent_when_only_the_unread_count_changed(self):
+		# Telegram's window title carries the global unread count, which moves
+		# on its own. Speaking that change would tell the user they had
+		# switched chats when Ctrl+Tab had not moved at all.
+		window = _FakeUIA(name="Old chat - Telegram")
 		self.module._testApi.foregroundObject = window
 		self.module._paintedChatTitle = lambda root: ""
+		self.module._recognizePaintedChatTitle = lambda *args: False
 
 		class _Gesture:
 			def send(self):
-				window.name = "Old chat"
+				window.name = "(1) Old chat - Telegram"
 
 		self.module.switchChat(_Gesture())
-		_, callback, args = self.module._testCore.calls.pop()
-		callback(*args)
+		while self.module._testCore.calls:
+			_, callback, args = self.module._testCore.calls.pop(0)
+			callback(*args)
 
-		self.assertEqual(self.module._testUi.messages, ["Old chat"])
+		self.assertEqual(self.module._testUi.messages, [])
 
 	def test_control_tab_does_not_report_a_stale_window_title_as_a_new_chat(self):
 		# The window name keeps Telegram's own decorations while the painted
