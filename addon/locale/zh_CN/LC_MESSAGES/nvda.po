@@ -41,3 +41,6 @@ msgstr "打开主菜单"
 
 msgid "Main menu is not available"
 msgstr "主菜单不可用"
+
+msgid "Switch chats and announce the chat name"
+msgstr "切换聊天并读出聊天名称"
