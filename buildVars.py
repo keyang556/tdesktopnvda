@@ -12,7 +12,7 @@ addon_info = AddonInfo(
 
 Adds Alt+1 to move focus to the chat list, Alt+M to open Telegram's main menu, Ctrl+Tab to announce the chat you switch to, and Ctrl+Enter to open the links and files a message holds. The add-on uses Telegram's stable UIA class information and leaves Telegram's native accessible names unchanged."""
 	),
-	addon_version="0.2.0",
+	addon_version="0.2.1",
 	addon_changelog=_(
 		"""Alt+1 is now instant on large accounts, works from inside the main menu, and repeats the current chat name. Alt+M finds its button in both left-pane layouts. Ctrl+Tab and Ctrl+Shift+Tab announce the chat you switch to. Ctrl+Enter opens the links, file paths and attachments in the focused message, and passes through unchanged outside a message."""
 	),
