@@ -548,13 +548,15 @@ def _redactedLink(url: str) -> str:
 	"""Describe a link for the log without the secrets it may carry.
 
 	Password resets, signed downloads and OAuth callbacks keep their
-	credentials in the path, query and fragment, and NVDA logs are routinely
+	credentials in the path, query and fragment, and a URL can carry a user
+	name and password in front of its host as well. NVDA logs are routinely
 	shared to get help, so only the scheme and host are ever recorded.
 	"""
 	parts = _URL_PARTS.match(url)
 	if parts is None:
 		return "<link>"
-	return f"{parts['scheme']}{parts['slashes'] or ''}{parts['authority']}"
+	host = parts["authority"].rpartition("@")[2]
+	return f"{parts['scheme']}{parts['slashes'] or ''}{host}"
 
 
 def _openMessageLink(url: str) -> None:
