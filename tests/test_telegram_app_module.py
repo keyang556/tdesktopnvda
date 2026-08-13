@@ -580,6 +580,24 @@ class TelegramAppModuleTests(unittest.TestCase):
 
 		self.assertEqual(self.module._testUi.messages, [])
 
+	def test_control_tab_announces_nothing_when_no_title_could_be_read_first(self):
+		# With no readable title before the switch there is nothing for a later
+		# one to prove, so the first title that does arrive is not announced.
+		window = _FakeUIA(name="")
+		self.module._testApi.foregroundObject = window
+		painted = [""]
+		self.module._paintedChatTitle = lambda root: painted[0]
+
+		class _Gesture:
+			def send(self):
+				window.name = "Old chat"
+				painted[0] = "Old chat"
+
+		self.module.switchChat(_Gesture())
+
+		self.assertEqual(self.module._testCore.calls, [])
+		self.assertEqual(self.module._testUi.messages, [])
+
 	def test_control_tab_does_not_speak_a_painted_title_it_could_not_read_before(self):
 		# The display model was unreadable when the switch started, so the first
 		# painted title it does return proves nothing on its own; here it still

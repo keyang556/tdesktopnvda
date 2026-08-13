@@ -687,6 +687,11 @@ def switchChat(gesture: object) -> None:
 		# Without an originating window, a later callback could not tell
 		# Telegram apart from whatever else takes the foreground.
 		return
+	if not previousWindowTitle and not previousPaintedTitle:
+		# No source could be read before the switch, so nothing read after it
+		# proves a change: the first title that does arrive may still be the
+		# chat the user just left, and announcing it would name the wrong one.
+		return
 	_chatSwitchGeneration += 1
 	core.callLater(
 		_CHAT_SWITCH_ANNOUNCEMENT_DELAY_MS,
