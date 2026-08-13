@@ -6,7 +6,7 @@ Telegram Desktop Accessibility is an NVDA add-on for Telegram Desktop on Windows
 
 ## Features
 
-* `Alt+1` moves focus to the selected chat in the chat list, or to the first chat when no chat is selected.
+* `Alt+1` moves focus to the selected chat in the chat list, or to the first chat when no chat is selected. Pressing it while a chat already has focus repeats that chat's name, and pressing it inside the main menu closes the menu first.
 * `Alt+M` opens Telegram's main menu.
 * Chat detection uses Telegram's stable UIA class information rather than a translated control name, so the commands do not depend on Telegram's interface language.
 * Telegram continues to provide the names of chats, messages, buttons, and list items. The add-on does not replace or rewrite them.
@@ -19,7 +19,7 @@ If `Alt+1` cannot find a chat list or the list is empty, NVDA reports that condi
 
 ## Implementation
 
-Telegram Desktop's patched Qt accessibility provider exposes RTTI-based UIA class names. The add-on identifies the chat list as `Dialogs::InnerWidget`, allowing it to work independently of the localized accessible name. The main menu command locates Telegram's native menu button inside `Dialogs::Widget` and invokes its existing action.
+Telegram Desktop's patched Qt accessibility provider exposes RTTI-based UIA class names. The add-on identifies the chat list as `Dialogs::InnerWidget`, allowing it to work independently of the localized accessible name. It locates that list through UIA point hit-testing first, because a full-subtree provider query costs roughly half a second on large accounts, and falls back to the subtree query for unusual layouts. The main menu command locates Telegram's native menu button inside `Dialogs::Widget` and invokes its existing action.
 
 ## Keyboard Shortcuts
 

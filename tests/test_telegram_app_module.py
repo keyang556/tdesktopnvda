@@ -99,6 +99,9 @@ class _FakeUIA:
 		self.UIAAutomationId = automationId
 		self.states = set(states or ())
 		self.children = list(children or ())
+		self.parent = None
+		for child in self.children:
+			child.parent = self
 		self.isOffscreen = isOffscreen
 		self.failQuery = failQuery
 		self.failAction = failAction
@@ -217,15 +220,35 @@ def _loadTelegramModule():
 		baseCacheRequest=object(),
 	)
 
+	comInterfaces = types.ModuleType("comInterfaces")
+	uiaClient = types.ModuleType("comInterfaces.UIAutomationClient")
+	uiaClient.tagPOINT = lambda x, y: types.SimpleNamespace(x=x, y=y)
+
+	core = types.ModuleType("core")
+	core.calls = []
+	core.callLater = lambda delay, function, *args: core.calls.append((delay, function, args))
+
+	keyboardHandler = types.ModuleType("keyboardHandler")
+	keyboardHandler.KeyboardInputGesture = type("KeyboardInputGesture", (), {})
+
+	winUser = types.ModuleType("winUser")
+	winUser.VK_MENU = 0x12
+	winUser.getAsyncKeyState = lambda key: 0
+
 	stubs = {
 		"api": api,
 		"appModuleHandler": appModuleHandler,
+		"comInterfaces": comInterfaces,
+		"comInterfaces.UIAutomationClient": uiaClient,
 		"controlTypes": controlTypes,
+		"core": core,
+		"keyboardHandler": keyboardHandler,
 		"NVDAObjects": nvdaObjects,
 		"NVDAObjects.UIA": uiaModule,
 		"scriptHandler": scriptHandler,
 		"ui": ui,
 		"UIAHandler": uiaHandler,
+		"winUser": winUser,
 	}
 	previous = {name: sys.modules.get(name) for name in stubs}
 	sys.modules.update(stubs)
@@ -236,6 +259,7 @@ def _loadTelegramModule():
 		assert spec.loader is not None
 		spec.loader.exec_module(module)
 		module._testApi = api
+		module._testCore = core
 		module._testUi = ui
 		return module
 	finally:
@@ -308,6 +332,45 @@ class TelegramAppModuleTests(unittest.TestCase):
 		self.module.AppModule().script_focusChatList(None)
 
 		self.assertEqual(self.module._testUi.messages, ["Saved Messages"])
+
+	def test_alt_1_repeats_current_chat_name_without_searching_again(self):
+		current = _FakeUIA(role=_Role.LISTITEM, name="Saved Messages")
+		_FakeUIA(
+			role=_Role.LIST,
+			className="class Dialogs::InnerWidget",
+			children=[current],
+		)
+		self.module._testApi.focusObject = current
+		self.module._testApi.foregroundObject = _FakeUIA(failQuery=True)
+
+		self.module.AppModule().script_focusChatList(None)
+
+		self.assertEqual(self.module._testUi.messages, ["Saved Messages"])
+
+	def test_alt_1_closes_the_main_menu_before_looking_for_the_chat_list(self):
+		self.module._testApi.focusObject = _FakeUIA(
+			role=_Role.BUTTON,
+			automationId="class Window::MainMenu.class Ui::IconButton",
+		)
+
+		self.module.AppModule().script_focusChatList(None)
+
+		self.assertEqual(len(self.module._testCore.calls), 1)
+		_, callback, _args = self.module._testCore.calls[0]
+		self.assertIs(callback, self.module._closeMainMenuAndFocusChatList)
+
+	def test_alt_1_waits_for_the_alt_key_before_sending_escape(self):
+		self.module._testApi.focusObject = _FakeUIA(
+			role=_Role.BUTTON,
+			automationId="class Window::MainMenu.class Ui::IconButton",
+		)
+		self.module.winUser.getAsyncKeyState = lambda key: 0x8000
+
+		self.module._closeMainMenuAndFocusChatList()
+
+		self.assertEqual(len(self.module._testCore.calls), 1)
+		_, callback, _args = self.module._testCore.calls[0]
+		self.assertIs(callback, self.module._closeMainMenuAndFocusChatList)
 
 	def test_alt_1_reports_empty_chat_list(self):
 		self.module._testApi.foregroundObject = _FakeUIA(
