@@ -14,6 +14,7 @@ import api
 import appModuleHandler
 from comInterfaces.UIAutomationClient import IUIAutomationInvokePattern, tagPOINT
 import controlTypes
+from logHandler import log
 from NVDAObjects.UIA import UIA
 from scriptHandler import script
 import ui
@@ -21,15 +22,18 @@ import UIAHandler
 
 
 # Qualified loading from the companion global plug-in can execute this module
-# outside NVDA's ordinary app-module importer. Avoid double initialization on
-# reload while ensuring translated strings are available in both paths.
+# outside NVDA's ordinary app-module importer. UnigramPlus also loads this file
+# from a temporary module that is not registered in sys.modules, where NVDA's
+# frame-based initTranslation cannot install attributes on the caller module.
+# Resolve the owning add-on directly so both loading paths remain valid.
 if "_" not in globals():
-	addonHandler.initTranslation()
+	_ = addonHandler.getCodeAddon().getTranslationsInstance().gettext
 
 
 _CHAT_LIST_CLASS_NAME = "Dialogs::InnerWidget"
 _DIALOGS_WIDGET_CLASS_NAME = "Dialogs::Widget"
 _ICON_BUTTON_CLASS_NAME = "Ui::IconButton"
+_MAIN_WINDOW_CLASS_NAME = "MainWindow"
 _SIDEBAR_BUTTON_CLASS_NAME = "Ui::SideBarButton"
 _RTTI_CLASS_PREFIXES = ("class ", "struct ")
 _MAIN_MENU_CLASS_NAMES = {
@@ -254,10 +258,24 @@ def isTelegramMainMenuButton(obj: object) -> bool:
 	)
 
 
+def _usableElement(value: Any) -> Any | None:
+	"""Normalize a provider NULL COM element to ``None``.
+
+	Telegram returns a false-valued COM pointer when a UIA query or raw-tree
+	walk has no result. It is not Python ``None``, but every method call on it
+	raises ``NULL COM pointer access``. Normalize it before choosing a lookup
+	result so a missing sidebar button cannot hide the standard icon button.
+	"""
+	try:
+		return value if value else None
+	except Exception:
+		return None
+
+
 def _uiaElement(obj: object) -> Any | None:
 	"""Return the raw UIA element for an NVDA object without walking its children."""
 	try:
-		return getattr(obj, "UIAElement")
+		return _usableElement(getattr(obj, "UIAElement"))
 	except Exception:
 		return None
 
@@ -280,16 +298,30 @@ def _rttiClassCondition(client: Any, className: str) -> Any:
 	return client.CreateOrConditionFromArray(conditions)
 
 
-def _findFirstElement(element: Any, scope: int, conditions: list[Any]) -> Any | None:
+def _findFirstElement(
+	element: Any,
+	scope: int,
+	conditions: list[Any],
+	*,
+	useCache: bool = True,
+) -> Any | None:
 	"""Run one provider-side UIA query instead of expanding NVDA objects recursively."""
 	try:
 		handler = _uiaHandler()
 		client: Any = handler.clientObject
 		condition = conditions[0] if len(conditions) == 1 else client.CreateAndConditionFromArray(conditions)
-		return element.FindFirstBuildCache(
-			scope,
-			condition,
-			handler.baseCacheRequest,
+		if not useCache:
+			# Telegram's Qt provider can return a BuildCache result whose cached
+			# properties are readable but whose current COM pointer is NULL. Such
+			# an element can be identified as the menu button yet cannot expose an
+			# InvokePattern. Action targets therefore need a live query result.
+			return _usableElement(element.FindFirst(scope, condition))
+		return _usableElement(
+			element.FindFirstBuildCache(
+				scope,
+				condition,
+				handler.baseCacheRequest,
+			),
 		)
 	except Exception:
 		return None
@@ -372,7 +404,12 @@ def _findVisibleButtonByClass(
 			)
 	except Exception:
 		return None
-	return _findFirstElement(element, UIAHandler.TreeScope_Subtree, conditions)
+	return _findFirstElement(
+		element,
+		UIAHandler.TreeScope_Subtree,
+		conditions,
+		useCache=False,
+	)
 
 
 def _findTelegramMainMenuButton(root: object) -> Any | None:
@@ -411,7 +448,7 @@ def _rawElementProperty(element: Any, propertyId: int) -> object | None:
 def _rawViewWalker() -> Any | None:
 	try:
 		client: Any = _uiaHandler().clientObject
-		return client.RawViewWalker
+		return _usableElement(client.RawViewWalker)
 	except Exception:
 		return None
 
@@ -426,7 +463,11 @@ def _rawAutomationIdClassNames(element: Any) -> tuple[str, ...]:
 	automationId = _rawElementProperty(element, UIAHandler.UIA_AutomationIdPropertyId)
 	if not isinstance(automationId, str):
 		return ()
-	return tuple(_normalizedRttiClassName(component) for component in automationId.split("."))
+	return tuple(
+		className
+		for component in automationId.split(".")
+		if (className := _normalizedRttiClassName(component))
+	)
 
 
 def _isFirstElementOfClass(element: Any, className: str) -> bool:
@@ -437,17 +478,31 @@ def _isFirstElementOfClass(element: Any, className: str) -> bool:
 	sibling = element
 	for _step in range(_MAX_SIBLING_STEPS):
 		try:
-			sibling = walker.GetPreviousSiblingElement(sibling)
+			sibling = _usableElement(walker.GetPreviousSiblingElement(sibling))
 		except Exception:
 			return False
 		if sibling is None:
 			return True
 		if _rawNormalizedClassName(sibling) == className:
-			return False
+			# Qt can flatten title-bar and dialogs controls into one raw
+			# sibling list. A prior title-bar IconButton does not make the
+			# first Dialogs::Widget IconButton a later dialogs button.
+			if (
+				className != _ICON_BUTTON_CLASS_NAME
+				or _DIALOGS_WIDGET_CLASS_NAME in _rawAutomationIdClassNames(sibling)
+			):
+				return False
 	return False
 
 
-def _isRawTelegramMainMenuButton(element: Any) -> bool:
+def _rawElementSupportsInvoke(element: Any) -> bool:
+	try:
+		return element.GetCurrentPattern(UIAHandler.UIA_InvokePatternId) is not None
+	except Exception:
+		return False
+
+
+def _isRawTelegramMainMenuButton(element: Any, *, directTopLeftHit: bool = False) -> bool:
 	"""Identify the menu button without accepting nearby folder/icon buttons."""
 	if (
 		_rawElementProperty(element, UIAHandler.UIA_ControlTypePropertyId)
@@ -456,9 +511,14 @@ def _isRawTelegramMainMenuButton(element: Any) -> bool:
 	):
 		return False
 	className = _rawNormalizedClassName(element)
+	automationClasses = _rawAutomationIdClassNames(element)
+	if not className:
+		# Telegram 7.0.9 can omit both RTTI properties for every UIA object.
+		# Only accept such an element when it is the object directly returned
+		# from a source-derived top-left sample, never merely a neighbour.
+		return directTopLeftHit and not automationClasses and _rawElementSupportsInvoke(element)
 	if className not in (_SIDEBAR_BUTTON_CLASS_NAME, _ICON_BUTTON_CLASS_NAME):
 		return False
-	automationClasses = _rawAutomationIdClassNames(element)
 	if any(component in _SCROLLED_CONTAINER_CLASS_NAMES for component in automationClasses):
 		return False
 	if className == _ICON_BUTTON_CLASS_NAME and _DIALOGS_WIDGET_CLASS_NAME not in automationClasses:
@@ -482,7 +542,7 @@ def _findTelegramMainMenuButtonFromPoints(root: object) -> Any | None:
 		for yOffset in _MAIN_MENU_POINT_Y_OFFSETS:
 			y = round(location.top + min(yOffset, location.height * 0.25))
 			try:
-				element = client.ElementFromPoint(tagPOINT(x, y))
+				element = _usableElement(client.ElementFromPoint(tagPOINT(x, y)))
 				for _step in range(_MAX_UIA_PARENT_STEPS):
 					if element is None:
 						break
@@ -492,17 +552,20 @@ def _findTelegramMainMenuButtonFromPoints(root: object) -> Any | None:
 					# overlay, so inspect both adjacent raw-view siblings.
 					candidates = [element]
 					try:
-						candidates.append(walker.GetPreviousSiblingElement(element))
+						candidates.append(_usableElement(walker.GetPreviousSiblingElement(element)))
 					except Exception:
 						pass
 					try:
-						candidates.append(walker.GetNextSiblingElement(element))
+						candidates.append(_usableElement(walker.GetNextSiblingElement(element)))
 					except Exception:
 						pass
 					for candidate in candidates:
-						if candidate is not None and _isRawTelegramMainMenuButton(candidate):
+						if candidate is not None and _isRawTelegramMainMenuButton(
+							candidate,
+							directTopLeftHit=(candidate is element and yOffset <= 52),
+						):
 							return candidate
-					element = walker.GetParentElement(element)
+					element = _usableElement(walker.GetParentElement(element))
 			except Exception:
 				continue
 	return None
@@ -539,11 +602,14 @@ def _setElementFocus(element: Any) -> bool:
 
 def _invokeElement(element: Any) -> bool:
 	try:
-		unknown = element.GetCurrentPattern(UIAHandler.UIA_InvokePatternId)
+		unknown = _usableElement(element.GetCurrentPattern(UIAHandler.UIA_InvokePatternId))
+		if unknown is None:
+			return False
 		pattern = unknown.QueryInterface(IUIAutomationInvokePattern)
 		pattern.Invoke()
 		return True
 	except Exception:
+		log.debugWarning("Telegram main-menu InvokePattern failed", exc_info=True)
 		return False
 
 
@@ -552,6 +618,37 @@ def _foregroundObject() -> object | None:
 		return api.getForegroundObject()
 	except Exception:
 		return None
+
+
+def _appName(obj: object) -> str:
+	try:
+		return obj.appModule.appName.casefold()
+	except Exception:
+		return ""
+
+
+def _isTelegramMainWindow(obj: object) -> bool:
+	return obj is not None and _normalizedClassName(obj) == _MAIN_WINDOW_CLASS_NAME
+
+
+def _telegramMainWindow() -> object | None:
+	"""Return Telegram's main window even when a same-process popup is in front."""
+	root = _foregroundObject()
+	if _isTelegramMainWindow(root):
+		return root
+	appName = _appName(root)
+	if not appName:
+		# Do not select an unrelated desktop window when the foreground object
+		# cannot establish which application owns it.
+		return root
+	try:
+		children = api.getDesktopObject().children
+	except Exception:
+		return root
+	for child in children or ():
+		if _isTelegramMainWindow(child) and _appName(child) == appName:
+			return child
+	return root
 
 
 def _focusObject() -> object | None:
@@ -604,14 +701,16 @@ def focusChatList() -> None:
 
 def openMainMenu() -> None:
 	"""Invoke Telegram's native main-menu button."""
-	root = _foregroundObject()
+	root = _telegramMainWindow()
 	pointButton = _findTelegramMainMenuButtonFromPoints(root) if root is not None else None
+	log.debug("Telegram Alt+M point candidate found: %s", pointButton is not None)
 	if pointButton is not None and _invokeElement(pointButton):
 		return
 	# A sampled element can disappear while Telegram relays out the left pane,
 	# or its provider action can fail transiently. Preserve the established
 	# subtree lookup as a real execution fallback, not just a lookup fallback.
 	fallbackButton = _findTelegramMainMenuButton(root) if root is not None else None
+	log.debug("Telegram Alt+M subtree candidate found: %s", fallbackButton is not None)
 	if fallbackButton is not None and _invokeElement(fallbackButton):
 		return
 	ui.message(_("Main menu is not available"))

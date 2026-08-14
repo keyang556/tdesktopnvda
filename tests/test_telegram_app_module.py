@@ -67,6 +67,16 @@ class _FakeWalker:
 		return siblings[index + 1] if index + 1 < len(siblings) else None
 
 
+class _FakeNullElement:
+	"""Behave like comtypes' non-None NULL interface pointer."""
+
+	def __bool__(self):
+		return False
+
+	def __getattr__(self, name):
+		raise ValueError("NULL COM pointer access")
+
+
 class _FakeClient:
 	RawViewWalker = _FakeWalker()
 
@@ -178,6 +188,19 @@ class _FakeUIA:
 			raise AssertionError(f"unexpected tree scope: {scope}")
 		return next((node for node in nodes if condition.matches(node)), None)
 
+	def FindFirst(self, scope, condition):
+		if self.failQuery:
+			raise RuntimeError("provider query failed")
+		if scope == _TREE_SCOPE_CHILDREN:
+			nodes = iter(self.children)
+		elif scope == _TREE_SCOPE_DESCENDANTS:
+			nodes = self._descendants()
+		elif scope == _TREE_SCOPE_SUBTREE:
+			nodes = iter((self, *self._descendants()))
+		else:
+			raise AssertionError(f"unexpected tree scope: {scope}")
+		return next((node for node in nodes if condition.matches(node)), None)
+
 	def GetCurrentPropertyValue(self, propertyId):
 		return self.propertyValue(propertyId)
 
@@ -190,15 +213,21 @@ class _FakeUIA:
 		self.focused = True
 
 
-def _loadTelegramModule():
+def _loadTelegramModule(*, injectTranslation=True):
 	addonHandler = types.ModuleType("addonHandler")
 	addonHandler.initTranslation = lambda: None
+	translations = types.SimpleNamespace(gettext=lambda message: f"translated:{message}")
+	addonHandler.getCodeAddon = lambda: types.SimpleNamespace(
+		getTranslationsInstance=lambda: translations,
+	)
 
 	api = types.ModuleType("api")
 	api.focusObject = None
 	api.foregroundObject = None
 	api.getFocusObject = lambda: api.focusObject
 	api.getForegroundObject = lambda: api.foregroundObject
+	api.desktopObject = types.SimpleNamespace(children=[])
+	api.getDesktopObject = lambda: api.desktopObject
 
 	appModuleHandler = types.ModuleType("appModuleHandler")
 	appModuleHandler.AppModule = object
@@ -206,6 +235,12 @@ def _loadTelegramModule():
 	controlTypes = types.ModuleType("controlTypes")
 	controlTypes.Role = _Role
 	controlTypes.State = _State
+
+	logHandler = types.ModuleType("logHandler")
+	logHandler.log = types.SimpleNamespace(
+		debug=lambda *args, **kwargs: None,
+		debugWarning=lambda *args, **kwargs: None,
+	)
 
 	nvdaObjects = types.ModuleType("NVDAObjects")
 	uiaModule = types.ModuleType("NVDAObjects.UIA")
@@ -259,6 +294,7 @@ def _loadTelegramModule():
 		"comInterfaces": comInterfaces,
 		"comInterfaces.UIAutomationClient": uiaClient,
 		"controlTypes": controlTypes,
+		"logHandler": logHandler,
 		"NVDAObjects": nvdaObjects,
 		"NVDAObjects.UIA": uiaModule,
 		"scriptHandler": scriptHandler,
@@ -270,7 +306,8 @@ def _loadTelegramModule():
 	try:
 		spec = importlib.util.spec_from_file_location("telegram_app_module_under_test", MODULE_PATH)
 		module = importlib.util.module_from_spec(spec)
-		module._ = lambda message: message
+		if injectTranslation:
+			module._ = lambda message: message
 		assert spec.loader is not None
 		spec.loader.exec_module(module)
 		module._testApi = api
@@ -287,6 +324,11 @@ def _loadTelegramModule():
 class TelegramAppModuleTests(unittest.TestCase):
 	def setUp(self):
 		self.module = _loadTelegramModule()
+
+	def test_unregistered_fallback_module_loads_its_addon_translation(self):
+		module = _loadTelegramModule(injectTranslation=False)
+
+		self.assertEqual(module._MAIN_MENU_CLASS_NAMES["Window::MainMenu"], "translated:Main menu")
 
 	def test_profile_label_is_applied_before_focus_announcement(self):
 		obj = _FakeUIA(
@@ -649,8 +691,9 @@ class TelegramAppModuleTests(unittest.TestCase):
 	def test_standard_layout_samples_inside_the_40_pixel_toggle(self):
 		menu = _FakeUIA(
 			role=_Role.BUTTON,
-			className="class Ui::IconButton",
-			automationId="class Dialogs::Widget.class Ui::IconButton",
+			# Telegram 7.0.9 exposes neither property in the attached NVDA log.
+			className="",
+			automationId="",
 		)
 		searchControls = _FakeUIA(children=[menu], failQuery=True)
 		searchControls.location = types.SimpleNamespace(left=0, top=0, width=1200, height=800)
@@ -663,6 +706,28 @@ class TelegramAppModuleTests(unittest.TestCase):
 
 		self.assertEqual(menu.actionCount, 1)
 		self.assertEqual(self.module._testUi.messages, [])
+
+	def test_metadata_free_button_is_accepted_only_as_direct_point_hit(self):
+		button = _FakeUIA(role=_Role.BUTTON)
+
+		self.assertFalse(self.module._isRawTelegramMainMenuButton(button))
+		self.assertTrue(self.module._isRawTelegramMainMenuButton(button, directTopLeftHit=True))
+
+	def test_direct_standard_menu_ignores_flattened_prior_icon_sibling(self):
+		priorTitleBarIcon = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::IconButton",
+			automationId="class MainWindow.class Ui::Platform::TitleWidget.class Ui::IconButton",
+		)
+		menu = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::IconButton",
+			automationId="class MainWindow.class Dialogs::Widget.class Ui::IconButton",
+		)
+		_FakeUIA(children=[priorTitleBarIcon, menu])
+
+		self.assertTrue(self.module._isRawTelegramMainMenuButton(menu))
+		self.assertTrue(self.module._isRawTelegramMainMenuButton(menu, directTopLeftHit=True))
 
 	def test_point_lookup_checks_button_beside_transparent_overlay(self):
 		overlay = _FakeUIA(
@@ -725,6 +790,94 @@ class TelegramAppModuleTests(unittest.TestCase):
 		self.module.AppModule().script_openMainMenu(None)
 
 		self.assertEqual(fallbackMenu.actionCount, 1)
+		self.assertEqual(self.module._testUi.messages, [])
+
+	def test_subtree_menu_query_returns_a_live_actionable_element(self):
+		menu = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::IconButton",
+			automationId="class Dialogs::Widget.class Ui::IconButton",
+		)
+		window = _FakeUIA(children=[menu])
+		window.location = types.SimpleNamespace(left=0, top=0, width=1200, height=800)
+		window.FindFirstBuildCache = lambda *args: (_ for _ in ()).throw(
+			AssertionError("action lookup must not return a cached-only element"),
+		)
+		self.module._testApi.foregroundObject = window
+		self.module._uiaHandler().clientObject.ElementFromPoint = lambda point: window
+
+		self.module.AppModule().script_openMainMenu(None)
+
+		self.assertEqual(menu.actionCount, 1)
+		self.assertEqual(self.module._testUi.messages, [])
+
+	def test_null_sidebar_query_falls_through_to_standard_icon_button(self):
+		menu = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::IconButton",
+			automationId="class Dialogs::Widget.class Ui::IconButton",
+		)
+		window = _FakeUIA(children=[menu])
+		originalFindFirst = window.FindFirst
+
+		def findFirst(scope, condition):
+			result = originalFindFirst(scope, condition)
+			return result if result is not None else _FakeNullElement()
+
+		window.FindFirst = findFirst
+
+		self.assertIs(self.module._findTelegramMainMenuButton(window), menu)
+
+	def test_point_lookup_treats_null_previous_sibling_as_tree_boundary(self):
+		menu = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::IconButton",
+			automationId="class Dialogs::Widget.class Ui::IconButton",
+		)
+		window = _FakeUIA(children=[menu], failQuery=True)
+		window.location = types.SimpleNamespace(left=0, top=0, width=1200, height=800)
+		client = self.module._uiaHandler().clientObject
+		baseWalker = client.RawViewWalker
+
+		class NullTerminatedWalker:
+			def GetParentElement(self, element):
+				return baseWalker.GetParentElement(element) or _FakeNullElement()
+
+			def GetPreviousSiblingElement(self, element):
+				return baseWalker.GetPreviousSiblingElement(element) or _FakeNullElement()
+
+			def GetNextSiblingElement(self, element):
+				return baseWalker.GetNextSiblingElement(element) or _FakeNullElement()
+
+		client.RawViewWalker = NullTerminatedWalker()
+		self.addCleanup(setattr, client, "RawViewWalker", baseWalker)
+		client.ElementFromPoint = lambda point: menu
+		self.module._testApi.foregroundObject = window
+
+		self.module.AppModule().script_openMainMenu(None)
+
+		self.assertEqual(menu.actionCount, 1)
+		self.assertEqual(self.module._testUi.messages, [])
+
+	def test_popup_foreground_uses_same_app_main_window(self):
+		menu = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::IconButton",
+			automationId="class Dialogs::Widget.class Ui::IconButton",
+		)
+		mainWindow = _FakeUIA(className="class MainWindow", children=[menu])
+		mainWindow.location = types.SimpleNamespace(left=0, top=0, width=1200, height=800)
+		popup = _FakeUIA(className="class NotificationWindow")
+		appModule = types.SimpleNamespace(appName="telegram")
+		mainWindow.appModule = appModule
+		popup.appModule = appModule
+		self.module._testApi.foregroundObject = popup
+		self.module._testApi.desktopObject.children = [mainWindow]
+		self.module._uiaHandler().clientObject.ElementFromPoint = lambda point: menu
+
+		self.module.AppModule().script_openMainMenu(None)
+
+		self.assertEqual(menu.actionCount, 1)
 		self.assertEqual(self.module._testUi.messages, [])
 
 	def test_point_lookup_falls_back_when_a_neighbouring_button_is_hit(self):
