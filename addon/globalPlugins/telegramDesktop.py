@@ -206,6 +206,10 @@ def _cleanTelegramControlName(obj: object) -> None:
 		_setObjectName(obj, providerName or fallback)
 		return
 	if providerName:
+		# Some NVDA overlays expose an empty cached name even though Telegram's
+		# underlying UIA element has a useful one. Preserve that provider name on
+		# the object before focus speech is built.
+		_setObjectName(obj, providerName)
 		return
 	mainMenuName = _mainMenuName(obj, automationClasses)
 	if mainMenuName is not None:
@@ -259,8 +263,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			foreground = api.getForegroundObject()
 		except Exception:
 			foreground = None
-		if foreground is not None:
-			self._updateGestureBindings(foreground)
+		# Fail closed if NVDA cannot identify the foreground application: leaving
+		# Telegram's global shortcuts bound could swallow those keys elsewhere.
+		self._updateGestureBindings(foreground)
 		# Labels must be in place before NVDA's focus handler builds speech.
 		# This runs whatever the foreground turned out to be, because naming a
 		# Telegram control is safe regardless of which window is in front.

@@ -196,7 +196,7 @@ class TelegramGlobalPluginTests(unittest.TestCase):
 
 		self.assertEqual(plugin.boundGestures, {})
 
-	def test_an_unreadable_foreground_leaves_the_bindings_alone(self):
+	def test_an_unreadable_foreground_clears_telegram_bindings(self):
 		plugin = self.module.GlobalPlugin()
 		self.module.api.foregroundObject = _FakeObject()
 		plugin.event_gainFocus(_FakeObject(), lambda: None)
@@ -207,7 +207,17 @@ class TelegramGlobalPluginTests(unittest.TestCase):
 		self.module.api.getForegroundObject = raiseError
 		plugin.event_gainFocus(_FakeObject(appName="notepad"), lambda: None)
 
-		self.assertIn("kb:alt+1", plugin.boundGestures)
+		self.assertEqual(plugin.boundGestures, {})
+
+	def test_a_missing_foreground_clears_telegram_bindings(self):
+		plugin = self.module.GlobalPlugin()
+		self.module.api.foregroundObject = _FakeObject()
+		plugin.event_gainFocus(_FakeObject(), lambda: None)
+
+		self.module.api.foregroundObject = None
+		plugin.event_gainFocus(_FakeObject(appName="notepad"), lambda: None)
+
+		self.assertEqual(plugin.boundGestures, {})
 
 	def test_repeated_updates_do_not_rebind_or_raise(self):
 		plugin = self.module.GlobalPlugin()
@@ -318,6 +328,7 @@ class TelegramGlobalPluginTests(unittest.TestCase):
 			className="class Ui::UserpicButton",
 			role=_Role.BUTTON,
 			providerName="Telegram profile",
+			exposedName="",
 		)
 
 		self.module._cleanTelegramControlName(obj)
