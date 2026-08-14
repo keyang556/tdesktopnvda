@@ -1252,11 +1252,14 @@ def _redactedLink(url: str) -> str:
 	Password resets, signed downloads and OAuth callbacks keep their
 	credentials in the path, query and fragment, and a URL can carry a user
 	name and password in front of its host as well. NVDA logs are routinely
-	shared to get help, so only the scheme and host are ever recorded.
+	shared to get help, so only the scheme and host are ever recorded. Schemes
+	without an authority, such as ``mailto:``, are reduced to the scheme alone.
 	"""
 	parts = _URL_PARTS.match(url)
 	if parts is None:
 		return "<link>"
+	if not parts["slashes"]:
+		return parts["scheme"]
 	host = parts["authority"].rpartition("@")[2]
 	return f"{parts['scheme']}{parts['slashes'] or ''}{host}"
 
