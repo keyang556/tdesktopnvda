@@ -41,3 +41,30 @@ msgstr "Открыть главное меню"
 
 msgid "Main menu is not available"
 msgstr "Главное меню недоступно"
+
+msgid "Switch chats and announce the chat name"
+msgstr "Переключать чаты и объявлять название чата"
+
+msgid "Main menu"
+msgstr "Главное меню"
+
+msgid "Profile"
+msgstr "Профиль"
+
+msgid "Accounts"
+msgstr "Учётные записи"
+
+msgid "Menu item"
+msgstr "Пункт меню"
+
+msgid "Emoji, stickers, and GIFs"
+msgstr "Эмодзи, стикеры и GIF-анимации"
+
+msgid "Record voice message"
+msgstr "Записать голосовое сообщение"
+
+msgid "Telegram suggestion"
+msgstr "Рекомендация Telegram"
+
+msgid "Dismiss suggestion"
+msgstr "Закрыть рекомендацию"
