@@ -316,7 +316,8 @@ def _loadTelegramModule(*, executeTwice=False):
 	)
 	mouseHandler = types.ModuleType("mouseHandler")
 	mouseHandler.doPrimaryClick = lambda: None
-	winUser = types.ModuleType("winUser")
+	winUser.getCursorPos = lambda: (0, 0)
+	winUser.setCursorPos = lambda *position: None
 
 	stubs = {
 		"addonHandler": addonHandler,

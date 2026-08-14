@@ -87,8 +87,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			foreground = api.getForegroundObject()
 		except Exception:
 			foreground = None
-		if foreground is not None:
-			self._updateGestureBindings(foreground)
+		# A failed foreground lookup cannot safely justify keeping process-wide
+		# shortcuts bound. Fail closed so stale Telegram bindings never swallow
+		# the same gestures after the user has moved to another application.
+		self._updateGestureBindings(foreground)
 		nextHandler()
 
 	@script(description=_("Move focus to chat list"))
