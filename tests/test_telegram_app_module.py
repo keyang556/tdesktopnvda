@@ -84,6 +84,7 @@ class _FakeUIA:
 		*,
 		role=None,
 		name="",
+		value="",
 		className="",
 		automationId="",
 		states=None,
@@ -95,10 +96,14 @@ class _FakeUIA:
 	):
 		self.role = role
 		self.name = name
+		self.value = value
 		self.UIAClassName = className
 		self.UIAAutomationId = automationId
 		self.states = set(states or ())
 		self.children = list(children or ())
+		self.parent = None
+		for child in self.children:
+			child.parent = self
 		self.isOffscreen = isOffscreen
 		self.failQuery = failQuery
 		self.failAction = failAction
@@ -217,15 +222,32 @@ def _loadTelegramModule():
 		baseCacheRequest=object(),
 	)
 
+	core = types.ModuleType("core")
+	core.calls = []
+	core.callLater = lambda delay, function, *args: core.calls.append((delay, function, args))
+
+	logHandler = types.ModuleType("logHandler")
+	logHandler.log = types.SimpleNamespace(
+		debug=lambda *args, **kwargs: None,
+		exception=lambda *args, **kwargs: None,
+	)
+	mouseHandler = types.ModuleType("mouseHandler")
+	mouseHandler.doPrimaryClick = lambda: None
+	winUser = types.ModuleType("winUser")
+
 	stubs = {
 		"api": api,
 		"appModuleHandler": appModuleHandler,
 		"controlTypes": controlTypes,
+		"core": core,
+		"logHandler": logHandler,
+		"mouseHandler": mouseHandler,
 		"NVDAObjects": nvdaObjects,
 		"NVDAObjects.UIA": uiaModule,
 		"scriptHandler": scriptHandler,
 		"ui": ui,
 		"UIAHandler": uiaHandler,
+		"winUser": winUser,
 	}
 	previous = {name: sys.modules.get(name) for name in stubs}
 	sys.modules.update(stubs)
@@ -236,6 +258,7 @@ def _loadTelegramModule():
 		assert spec.loader is not None
 		spec.loader.exec_module(module)
 		module._testApi = api
+		module._testCore = core
 		module._testUi = ui
 		return module
 	finally:
@@ -453,6 +476,353 @@ class TelegramAppModuleTests(unittest.TestCase):
 	def test_shortcut_gestures_match_unigram_plus(self):
 		self.assertEqual(self.module.AppModule.script_focusChatList.gesture, "kb:alt+1")
 		self.assertEqual(self.module.AppModule.script_openMainMenu.gesture, "kb:alt+m")
+		self.assertEqual(self.module.AppModule.script_showMessageLinks.gesture, "kb:control+enter")
+
+	def test_link_extraction_preserves_order_and_removes_message_punctuation(self):
+		text = (
+			"Android: https://play.google.com/store/apps/details?id=app, "
+			"iOS: https://apps.apple.com/app/id123. "
+			"Windows: https://example.com/download_(stable)."
+		)
+
+		self.assertEqual(
+			self.module.linksFromMessageText(text),
+			(
+				"https://play.google.com/store/apps/details?id=app",
+				"https://apps.apple.com/app/id123",
+				"https://example.com/download_(stable)",
+			),
+		)
+
+	def test_link_extraction_normalizes_www_and_email_and_deduplicates(self):
+		text = "www.example.com Help@Example.com https://EXAMPLE.com https://example.com"
+
+		self.assertEqual(
+			self.module.linksFromMessageText(text),
+			("https://www.example.com", "mailto:Help@Example.com", "https://EXAMPLE.com"),
+		)
+
+	def test_link_deduplication_keeps_case_sensitive_url_components(self):
+		text = "https://example.com/User and https://example.com/user"
+
+		self.assertEqual(
+			self.module.linksFromMessageText(text),
+			("https://example.com/User", "https://example.com/user"),
+		)
+
+	def test_link_extraction_recognizes_scheme_less_telegram_links(self):
+		self.assertEqual(
+			self.module.linksFromMessageText("Read example.com/path?q=1 today"),
+			("https://example.com/path?q=1",),
+		)
+		self.assertEqual(
+			self.module.linksFromMessageText("Read example.com today"),
+			("https://example.com",),
+		)
+		self.assertEqual(
+			self.module.linksFromMessageText("Deploy to my-host.example.co.uk now"),
+			("https://my-host.example.co.uk",),
+		)
+
+	def test_link_extraction_does_not_treat_a_file_name_as_a_domain(self):
+		self.assertEqual(self.module.linksFromMessageText("Here is report.pdf"), ())
+		self.assertEqual(
+			[target.kind for target in self.module.targetsFromMessageText("Here is report.pdf")],
+			["attachment"],
+		)
+
+	def test_logging_never_records_the_path_or_query_of_a_link(self):
+		redacted = self.module._redactedLink("https://example.com/reset?token=secret#part")
+
+		self.assertEqual(redacted, "https://example.com")
+		self.assertNotIn("secret", redacted)
+
+	def test_logging_never_records_the_credentials_in_a_link(self):
+		redacted = self.module._redactedLink("https://user:password@example.com/path")
+
+		self.assertEqual(redacted, "https://example.com")
+		self.assertNotIn("password", redacted)
+
+	def test_logging_never_records_a_mailto_recipient(self):
+		redacted = self.module._redactedLink("mailto:private-recipient@example.com?subject=secret")
+
+		self.assertEqual(redacted, "mailto:")
+		self.assertNotIn("private-recipient", redacted)
+		self.assertNotIn("secret", redacted)
+
+	def test_file_paths_in_message_text_become_openable_targets(self):
+		text = (
+			"Local C:\\Users\\me\\Reports\\q3.pdf and "
+			"\\\\server\\share\\notes.txt and "
+			"file:///C:/Users/me/plan%20b.txt"
+		)
+
+		self.assertEqual(
+			[(target.kind, target.value) for target in self.module.targetsFromMessageText(text)],
+			[
+				("file", "C:\\Users\\me\\Reports\\q3.pdf"),
+				("file", "\\\\server\\share\\notes.txt"),
+				("file", "C:\\Users\\me\\plan b.txt"),
+			],
+		)
+
+	def test_attachment_file_name_is_read_from_a_telegram_document_name(self):
+		self.assertEqual(
+			self.module._attachmentFileName("Quarterly report.pdf, 1.2 MB"),
+			"Quarterly report.pdf",
+		)
+		self.assertEqual(self.module._attachmentFileName("A message without a document"), "")
+
+	def test_control_enter_offers_the_attachment_of_the_focused_message(self):
+		document = _FakeUIA(name="Quarterly report.pdf, 1.2 MB")
+		message = _FakeUIA(role=_Role.LISTITEM, name="Here it is", children=[document])
+		_FakeUIA(role=_Role.LIST, automationId="ChatsList", children=[message])
+		self.module._testApi.focusObject = message
+
+		targets = self.module.messageTargets(message)
+
+		self.assertEqual(
+			[(target.kind, target.label) for target in targets],
+			[("attachment", "Quarterly report.pdf")],
+		)
+		self.assertIs(targets[0].value, document)
+
+	def test_control_enter_uses_telegram_filename_field_and_message_action(self):
+		fileName = _FakeUIA(name="Filename", value="Weather Radar Pro v2026.16.1 @channel.apk")
+		body = _FakeUIA(name="Message", value="Weather Radar Pro\nVersion: 2026.16.1")
+		message = _FakeUIA(
+			role=_Role.LISTITEM,
+			name="File, Not downloaded, Weather Radar Pro v2026.16.1 @channel.apk, 77.4 MB",
+			children=[fileName, body],
+		)
+		_FakeUIA(role=_Role.LIST, automationId="ChatsList", children=[message])
+		self.module._downloadedAttachmentPath = lambda name: ""
+		clicked = []
+		self.module._clickAttachmentAction = lambda obj: clicked.append(obj) or True
+
+		targets = self.module.messageTargets(message)
+		self.module._openMessageAttachment(targets[0])
+
+		self.assertEqual(
+			[(target.kind, target.label) for target in targets],
+			[("attachment", "Weather Radar Pro v2026.16.1 @channel.apk")],
+		)
+		self.assertEqual(clicked, [message])
+		self.assertEqual(fileName.actionCount, 0)
+
+	def test_message_body_field_is_not_taken_for_an_attachment(self):
+		body = _FakeUIA(name="Message", value="The notes are in the shared folder\nSee report.pdf")
+		message = _FakeUIA(role=_Role.LISTITEM, name="The notes are in the shared folder", children=[body])
+
+		self.assertEqual(self.module.attachmentsFromMessage(message), ())
+
+	def test_downloaded_attachment_is_opened_from_disk(self):
+		opened = []
+		self.module._downloadedAttachmentPath = lambda name: "C:\\Downloads\\report.pdf"
+		self.module._openLocalFile = lambda path: opened.append(path) or True
+		document = _FakeUIA(name="report.pdf")
+
+		self.module._openMessageAttachment(self.module._MessageTarget("attachment", "report.pdf", document))
+
+		self.assertEqual(opened, ["C:\\Downloads\\report.pdf"])
+		self.assertEqual(document.actionCount, 0)
+
+	def test_attachment_that_is_not_downloaded_is_opened_through_telegram(self):
+		self.module._downloadedAttachmentPath = lambda name: ""
+		document = _FakeUIA(name="report.pdf")
+
+		self.module._openMessageAttachment(self.module._MessageTarget("attachment", "report.pdf", document))
+
+		self.assertEqual(document.actionCount, 1)
+		self.assertEqual(self.module._testUi.messages, [])
+
+	def test_attachment_without_a_download_or_provider_action_is_reported(self):
+		self.module._downloadedAttachmentPath = lambda name: ""
+
+		self.module._openMessageAttachment(self.module._MessageTarget("attachment", "report.pdf", None))
+
+		self.assertEqual(self.module._testUi.messages, ["File is not downloaded yet"])
+
+	def test_control_enter_offers_links_and_files_together(self):
+		document = _FakeUIA(name="report.pdf, 1.2 MB")
+		message = _FakeUIA(
+			role=_Role.LISTITEM,
+			name="See https://example.com/docs and report.pdf",
+			children=[document],
+		)
+		_FakeUIA(role=_Role.LIST, automationId="ChatsList", children=[message])
+		self.module._testApi.focusObject = message
+
+		self.module.AppModule().script_showMessageLinks(None)
+
+		_, callback, args = self.module._testCore.calls[0]
+		self.assertIs(callback, self.module._showMessageLinksMenu)
+		self.assertEqual(
+			[(target.kind, target.label) for target in args[0]],
+			[("link", "https://example.com/docs"), ("attachment", "report.pdf")],
+		)
+		# The named attachment resolves to the object Telegram can act on.
+		self.assertIs(args[0][1].value, document)
+
+	def test_control_enter_shows_all_links_from_unigram_message(self):
+		message = _FakeUIA(
+			role=_Role.LISTITEM,
+			name="First https://one.example/path and https://two.example/path",
+		)
+		_FakeUIA(role=_Role.LIST, automationId="ChatsList", children=[message])
+		self.module._testApi.focusObject = message
+
+		class _Gesture:
+			sent = False
+
+			def send(self):
+				self.sent = True
+
+		gesture = _Gesture()
+		self.module.AppModule().script_showMessageLinks(gesture)
+
+		self.assertFalse(gesture.sent)
+		self.assertEqual(len(self.module._testCore.calls), 1)
+		_, callback, args = self.module._testCore.calls[0]
+		self.assertIs(callback, self.module._showMessageLinksMenu)
+		self.assertEqual(
+			[target.label for target in args[0]],
+			["https://one.example/path", "https://two.example/path"],
+		)
+
+	def test_control_enter_supports_qt_history_message_list(self):
+		message = _FakeUIA(role=_Role.LISTITEM, name="https://example.com")
+		_FakeUIA(role=_Role.LIST, className="class HistoryView::ListWidget", children=[message])
+		self.module._testApi.focusObject = message
+		opened = []
+		self.module._openMessageLink = opened.append
+
+		self.module.AppModule().script_showMessageLinks(None)
+
+		self.assertEqual(opened, ["https://example.com"])
+		self.assertEqual(self.module._testCore.calls, [])
+
+	def test_control_enter_finds_message_list_through_accessibility_wrappers(self):
+		message = _FakeUIA(role=_Role.LISTITEM, name="https://example.com")
+		wrapper = _FakeUIA(children=[message])
+		_FakeUIA(role=_Role.LIST, automationId="ChatsList", children=[wrapper])
+		self.module._testApi.focusObject = message
+		opened = []
+		self.module._openMessageLink = opened.append
+
+		self.module.AppModule().script_showMessageLinks(None)
+
+		self.assertEqual(opened, ["https://example.com"])
+		self.assertEqual(self.module._testCore.calls, [])
+
+	def test_control_enter_supports_live_qt_history_inner_hierarchy(self):
+		message = _FakeUIA(role=_Role.LISTITEM, name="https://example.com")
+		_FakeUIA(
+			automationId=(
+				"class MainWindow.class Ui::RpWidget.class MainWidget."
+				"class HistoryWidget.class Ui::ElasticScroll.class HistoryInner"
+			),
+			children=[message],
+		)
+		self.module._testApi.focusObject = message
+		opened = []
+		self.module._openMessageLink = opened.append
+
+		self.module.AppModule().script_showMessageLinks(None)
+
+		self.assertEqual(opened, ["https://example.com"])
+		self.assertEqual(self.module._testCore.calls, [])
+
+	def test_multiple_link_chooser_opens_live_second_selection(self):
+		class _Dialog:
+			def __init__(self):
+				self.bindings = {}
+
+			def SetSelection(self, selection):
+				self.selection = selection
+
+			def Bind(self, eventType, handler, id=None):
+				self.bindings[(eventType, id)] = handler
+
+			def Show(self):
+				pass
+
+			def Raise(self):
+				pass
+
+			def Close(self):
+				pass
+
+			def Destroy(self):
+				pass
+
+		class _SelectionEvent:
+			def GetSelection(self):
+				return 1
+
+		dialog = _Dialog()
+		wx = types.ModuleType("wx")
+		wx.EVT_BUTTON = "button"
+		wx.EVT_CLOSE = "close"
+		wx.EVT_LISTBOX = "listbox"
+		wx.ID_OK = 1
+		wx.CallAfter = lambda callback, *args: callback(*args)
+		wx.SingleChoiceDialog = lambda *args: dialog
+		gui = types.ModuleType("gui")
+		gui.mainFrame = types.SimpleNamespace(
+			prePopup=lambda: None,
+			postPopup=lambda: None,
+		)
+		previousGui = sys.modules.get("gui")
+		previousWx = sys.modules.get("wx")
+		sys.modules["gui"] = gui
+		sys.modules["wx"] = wx
+		opened = []
+		self.module._openMessageTarget = lambda target: opened.append(target.label)
+		targets = (
+			self.module._MessageTarget("link", "https://one.example", "https://one.example"),
+			self.module._MessageTarget("link", "https://two.example", "https://two.example"),
+		)
+		try:
+			self.module._showMessageLinksMenu(targets)
+			dialog.bindings[(wx.EVT_LISTBOX, None)](_SelectionEvent())
+			dialog.bindings[(wx.EVT_BUTTON, wx.ID_OK)](object())
+		finally:
+			if previousGui is None:
+				sys.modules.pop("gui", None)
+			else:
+				sys.modules["gui"] = previousGui
+			if previousWx is None:
+				sys.modules.pop("wx", None)
+			else:
+				sys.modules["wx"] = previousWx
+
+		self.assertEqual(opened, ["https://two.example"])
+
+	def test_control_enter_reports_message_without_links(self):
+		message = _FakeUIA(role=_Role.LISTITEM, name="A message without a link")
+		_FakeUIA(role=_Role.LIST, automationId="ChatsList", children=[message])
+		self.module._testApi.focusObject = message
+
+		self.module.AppModule().script_showMessageLinks(None)
+
+		self.assertEqual(self.module._testUi.messages, ["No links or files in this message"])
+		self.assertEqual(self.module._testCore.calls, [])
+
+	def test_control_enter_passes_through_outside_message_list(self):
+		self.module._testApi.focusObject = _FakeUIA(role=_Role.BUTTON, name="Send")
+
+		class _Gesture:
+			sent = False
+
+			def send(self):
+				self.sent = True
+
+		gesture = _Gesture()
+		self.module.AppModule().script_showMessageLinks(gesture)
+
+		self.assertTrue(gesture.sent)
+		self.assertEqual(self.module._testCore.calls, [])
 
 
 if __name__ == "__main__":
