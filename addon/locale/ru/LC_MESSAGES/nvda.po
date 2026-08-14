@@ -41,6 +41,3 @@ msgstr "Открыть главное меню"
 
 msgid "Main menu is not available"
 msgstr "Главное меню недоступно"
-
-msgid "Switch chats and announce the chat name"
-msgstr "Переключать чаты и объявлять название чата"
