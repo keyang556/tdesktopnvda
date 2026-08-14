@@ -249,6 +249,7 @@ def _loadTelegramModule():
 
 	comInterfaces = types.ModuleType("comInterfaces")
 	uiaClient = types.ModuleType("comInterfaces.UIAutomationClient")
+	uiaClient.IUIAutomationInvokePattern = object
 	uiaClient.tagPOINT = lambda x, y: types.SimpleNamespace(x=x, y=y)
 
 	stubs = {
@@ -645,6 +646,24 @@ class TelegramAppModuleTests(unittest.TestCase):
 		self.assertEqual(menu.actionCount, 1)
 		self.assertEqual(self.module._testUi.messages, [])
 
+	def test_standard_layout_samples_inside_the_40_pixel_toggle(self):
+		menu = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::IconButton",
+			automationId="class Dialogs::Widget.class Ui::IconButton",
+		)
+		searchControls = _FakeUIA(children=[menu], failQuery=True)
+		searchControls.location = types.SimpleNamespace(left=0, top=0, width=1200, height=800)
+		self.module._testApi.foregroundObject = searchControls
+		self.module._uiaHandler().clientObject.ElementFromPoint = (
+			lambda point: menu if 7 <= point.x <= 47 and 7 <= point.y <= 47 else searchControls
+		)
+
+		self.module.AppModule().script_openMainMenu(None)
+
+		self.assertEqual(menu.actionCount, 1)
+		self.assertEqual(self.module._testUi.messages, [])
+
 	def test_point_lookup_checks_button_beside_transparent_overlay(self):
 		overlay = _FakeUIA(
 			role=_Role.GROUPING,
@@ -656,7 +675,9 @@ class TelegramAppModuleTests(unittest.TestCase):
 			className="class Ui::IconButton",
 			automationId="class Dialogs::Widget.class Ui::IconButton",
 		)
-		window = _FakeUIA(children=[overlay, menu], failQuery=True)
+		# Telegram constructs the toggle first and the transparent hit area
+		# second, then stacks the latter underneath visually.
+		window = _FakeUIA(children=[menu, overlay], failQuery=True)
 		window.location = types.SimpleNamespace(left=0, top=0, width=1200, height=800)
 		self.module._testApi.foregroundObject = window
 		self.module._uiaHandler().clientObject.ElementFromPoint = lambda point: overlay
@@ -664,6 +685,46 @@ class TelegramAppModuleTests(unittest.TestCase):
 		self.module.AppModule().script_openMainMenu(None)
 
 		self.assertEqual(menu.actionCount, 1)
+		self.assertEqual(self.module._testUi.messages, [])
+
+	def test_point_lookup_opens_compact_and_expanded_folder_sidebars(self):
+		for sidebarWidth in (64, 240):
+			with self.subTest(sidebarWidth=sidebarWidth):
+				menu = _FakeUIA(
+					role=_Role.BUTTON,
+					className="class Ui::SideBarButton",
+					automationId="class MainWindow.class Ui::RpWidget.class Ui::SideBarButton",
+				)
+				window = _FakeUIA(children=[menu], failQuery=True)
+				window.location = types.SimpleNamespace(left=0, top=0, width=sidebarWidth + 900, height=800)
+				self.module._testApi.foregroundObject = window
+				self.module._uiaHandler().clientObject.ElementFromPoint = lambda point: menu
+
+				self.module.AppModule().script_openMainMenu(None)
+
+				self.assertEqual(menu.actionCount, 1)
+		self.assertEqual(self.module._testUi.messages, [])
+
+	def test_point_action_failure_retries_with_subtree_button(self):
+		stalePointButton = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::IconButton",
+			automationId="class Dialogs::Widget.class Ui::IconButton",
+			failAction=True,
+		)
+		fallbackMenu = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::IconButton",
+			automationId="class Dialogs::Widget.class Ui::IconButton",
+		)
+		window = _FakeUIA(children=[fallbackMenu])
+		window.location = types.SimpleNamespace(left=0, top=0, width=1200, height=800)
+		self.module._testApi.foregroundObject = window
+		self.module._uiaHandler().clientObject.ElementFromPoint = lambda point: stalePointButton
+
+		self.module.AppModule().script_openMainMenu(None)
+
+		self.assertEqual(fallbackMenu.actionCount, 1)
 		self.assertEqual(self.module._testUi.messages, [])
 
 	def test_point_lookup_falls_back_when_a_neighbouring_button_is_hit(self):

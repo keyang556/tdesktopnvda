@@ -12,7 +12,7 @@ from typing import Any, cast
 import addonHandler
 import api
 import appModuleHandler
-from comInterfaces.UIAutomationClient import tagPOINT
+from comInterfaces.UIAutomationClient import IUIAutomationInvokePattern, tagPOINT
 import controlTypes
 from NVDAObjects.UIA import UIA
 from scriptHandler import script
@@ -43,7 +43,9 @@ _COMPOSER_AUTOMATION_ID_NAMES = {
 }
 _TOP_BAR_SUGGESTION_CLASS_NAME = "Dialogs::TopBarSuggestionContent"
 _MAIN_MENU_POINT_X_OFFSETS = (32, 56, 80)
-_MAIN_MENU_POINT_Y_OFFSETS = (52, 76, 100)
+# The standard toggle occupies y=7..47 in Telegram's 40 px style, while the
+# folder-sidebar button extends farther down. Sample both regions.
+_MAIN_MENU_POINT_Y_OFFSETS = (24, 40, 52, 76, 100)
 # Telegram keeps folder buttons inside a scrolled container, while the menu
 # button above them is outside it.
 _SCROLLED_CONTAINER_CLASS_NAMES = ("Ui::ScrollArea", "Ui::ElasticScroll", "Ui::VerticalLayout")
@@ -484,9 +486,15 @@ def _findTelegramMainMenuButtonFromPoints(root: object) -> Any | None:
 				for _step in range(_MAX_UIA_PARENT_STEPS):
 					if element is None:
 						break
-					# Telegram paints a transparent MenuUnderButton group over
-					# the real button, which is its raw-view next sibling.
+					# Telegram constructs the real toggle before its transparent
+					# MenuUnderButton hit area, then changes their stacking order.
+					# UIA providers have exposed the toggle on either side of that
+					# overlay, so inspect both adjacent raw-view siblings.
 					candidates = [element]
+					try:
+						candidates.append(walker.GetPreviousSiblingElement(element))
+					except Exception:
+						pass
 					try:
 						candidates.append(walker.GetNextSiblingElement(element))
 					except Exception:
@@ -532,7 +540,7 @@ def _setElementFocus(element: Any) -> bool:
 def _invokeElement(element: Any) -> bool:
 	try:
 		unknown = element.GetCurrentPattern(UIAHandler.UIA_InvokePatternId)
-		pattern = unknown.QueryInterface(UIAHandler.IUIAutomationInvokePattern)
+		pattern = unknown.QueryInterface(IUIAutomationInvokePattern)
 		pattern.Invoke()
 		return True
 	except Exception:
@@ -597,8 +605,13 @@ def focusChatList() -> None:
 def openMainMenu() -> None:
 	"""Invoke Telegram's native main-menu button."""
 	root = _foregroundObject()
-	button = _findTelegramMainMenuButtonFromPoints(root) if root is not None else None
-	if button is None and root is not None:
-		button = _findTelegramMainMenuButton(root)
-	if button is None or not _invokeElement(button):
-		ui.message(_("Main menu is not available"))
+	pointButton = _findTelegramMainMenuButtonFromPoints(root) if root is not None else None
+	if pointButton is not None and _invokeElement(pointButton):
+		return
+	# A sampled element can disappear while Telegram relays out the left pane,
+	# or its provider action can fail transiently. Preserve the established
+	# subtree lookup as a real execution fallback, not just a lookup fallback.
+	fallbackButton = _findTelegramMainMenuButton(root) if root is not None else None
+	if fallbackButton is not None and _invokeElement(fallbackButton):
+		return
+	ui.message(_("Main menu is not available"))
