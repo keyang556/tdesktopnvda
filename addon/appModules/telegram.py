@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
 import re
 from typing import Any, NamedTuple, cast
@@ -25,6 +26,7 @@ import displayModel
 from keyboardHandler import KeyboardInputGesture
 from locationHelper import RectLTRB
 from logHandler import log
+import mouseHandler
 from NVDAObjects.UIA import UIA
 import queueHandler
 import screenBitmap
@@ -117,6 +119,11 @@ _HISTORY_INNER_CLASS_NAME = "HistoryInner"
 _MESSAGE_LIST_AUTOMATION_ID = "ChatsList"
 _MAX_MESSAGE_TREE_DEPTH = 4
 _MAX_MESSAGE_TREE_NODES = 64
+# In Telegram's screen-reader layout, a received document's circular action is
+# 98 by 39 logical pixels from the message row's top-left corner (the sender
+# avatar gutter plus the button's centre). Qt scales both offsets with DPI.
+_ATTACHMENT_ACTION_X_OFFSET = 98
+_ATTACHMENT_ACTION_Y_OFFSET = 39
 # One pass over the message text, so a span can only ever be one kind of thing.
 _MESSAGE_TARGET_PATTERN = re.compile(
 	r"(?P<uri>(?:(?:https?|ftp|tg|tonsite)://|mailto:)[^\s<>\u200e\u200f]+)"
@@ -1289,6 +1296,17 @@ def _messageDescendants(obj: object) -> tuple[object, ...]:
 	return tuple(found)
 
 
+def _attachmentNameFromNode(node: object) -> str:
+	"""Return the file name one part of a message exposes, if it is one."""
+	fileName = _attachmentFileName(_safeStringAttribute(node, "name"))
+	if fileName:
+		return fileName
+	value = _safeStringAttribute(node, "value").strip()
+	if not value or "\n" in value:
+		return ""
+	return value if _attachmentFileName(value) == value else ""
+
+
 def attachmentsFromMessage(focus: object) -> tuple[_MessageTarget, ...]:
 	"""Return the documents Telegram exposes on the focused message.
 
@@ -1300,11 +1318,12 @@ def attachmentsFromMessage(focus: object) -> tuple[_MessageTarget, ...]:
 	attachments: list[_MessageTarget] = []
 	seen: set[str] = set()
 	for node in _messageDescendants(focus):
-		fileName = _attachmentFileName(_safeStringAttribute(node, "name"))
+		fileName = _attachmentNameFromNode(node)
 		key = fileName.casefold()
 		if fileName and key not in seen:
 			seen.add(key)
-			attachments.append(_MessageTarget("attachment", fileName, node))
+			actionObject = node if _attachmentFileName(_safeStringAttribute(node, "name")) else focus
+			attachments.append(_MessageTarget("attachment", fileName, actionObject))
 	return tuple(attachments)
 
 
@@ -1348,6 +1367,31 @@ def _openMessageFile(path: str) -> None:
 		ui.message(_("Unable to open file"))
 
 
+def _clickAttachmentAction(message: object) -> bool:
+	"""Click the document action when UIA exposes metadata but no action."""
+	element = _uiaElement(message)
+	if element is None:
+		return False
+	try:
+		rect = element.CurrentBoundingRectangle
+		handle = getattr(message, "windowHandle", 0)
+		dpi = ctypes.windll.user32.GetDpiForWindow(handle) if handle else 96
+		scale = max(dpi, 96) / 96
+		x = rect.left + round(_ATTACHMENT_ACTION_X_OFFSET * scale)
+		y = rect.top + round(_ATTACHMENT_ACTION_Y_OFFSET * scale)
+		if x >= rect.right or y >= rect.bottom:
+			return False
+		previousPosition = winUser.getCursorPos()
+		try:
+			winUser.setCursorPos(x, y)
+			mouseHandler.doPrimaryClick()
+		finally:
+			winUser.setCursorPos(*previousPosition)
+		return True
+	except Exception:
+		return False
+
+
 def _openMessageAttachment(target: _MessageTarget) -> None:
 	"""Open a Telegram attachment, downloading it through Telegram if needed."""
 	path = _downloadedAttachmentPath(target.label)
@@ -1356,6 +1400,9 @@ def _openMessageAttachment(target: _MessageTarget) -> None:
 			return
 		ui.message(_("Unable to open file"))
 		return
+	if target.value is not None and _safeRole(target.value) == controlTypes.Role.LISTITEM:
+		if _clickAttachmentAction(target.value):
+			return
 	element = _uiaElement(target.value) if target.value is not None else None
 	if element is not None and _invokeElement(element):
 		# Telegram itself downloads the attachment and then opens it.
