@@ -13,7 +13,6 @@ from types import ModuleType
 
 import addonHandler
 import api
-import controlTypes
 import globalPluginHandler
 from scriptHandler import script
 import UIAHandler
@@ -160,24 +159,24 @@ def _suggestionText(obj: object) -> str:
 	return ", ".join(parts)
 
 
-def _mainMenuName(obj: object, automationClasses: tuple[str, ...]) -> str:
-	name = next(
-		(
-			_MAIN_MENU_CLASS_NAMES[className]
-			for className in reversed(automationClasses)
-			if className in _MAIN_MENU_CLASS_NAMES
-		),
-		None,
-	)
-	if name is None:
-		name = _MAIN_MENU_CLASS_NAMES.get(_normalizedClassName(obj))
-	if name is None:
-		try:
-			role = obj.role
-		except Exception:
-			role = None
-		name = _("Menu item") if role == controlTypes.Role.BUTTON else _("Main menu")
-	return name
+def _ownClassName(obj: object, automationClasses: tuple[str, ...]) -> str:
+	"""Return the control's own Telegram class, not one of its ancestors'.
+
+	The AutomationId is a chain running from the window down to the control, so
+	its last component is the control itself.
+	"""
+	return _normalizedClassName(obj) or (automationClasses[-1] if automationClasses else "")
+
+
+def _mainMenuName(obj: object, automationClasses: tuple[str, ...]) -> str | None:
+	"""Name the main menu's own unnamed controls, and nothing else.
+
+	Matching on the object's own class rather than anywhere in its ancestry
+	matters: opening the menu puts eight nested containers in the focus
+	ancestry, and naming every one of them made NVDA announce "Main menu" once
+	per level on each Tab. Everything else in the menu Telegram names itself.
+	"""
+	return _MAIN_MENU_CLASS_NAMES.get(_ownClassName(obj, automationClasses))
 
 
 def _cleanTelegramControlName(obj: object) -> None:
@@ -198,7 +197,7 @@ def _cleanTelegramControlName(obj: object) -> None:
 		return
 	automationClasses = _automationIdClassNames(automationId)
 	if _TOP_BAR_SUGGESTION_CLASS_NAME in automationClasses:
-		if _normalizedClassName(obj) == _TOP_BAR_SUGGESTION_CLASS_NAME:
+		if _ownClassName(obj, automationClasses) == _TOP_BAR_SUGGESTION_CLASS_NAME:
 			# The strip carries its wording in child labels, so read that rather
 			# than announcing a generic placeholder.
 			fallback = _suggestionText(obj) or _("Telegram suggestion")
@@ -208,8 +207,9 @@ def _cleanTelegramControlName(obj: object) -> None:
 		return
 	if providerName:
 		return
-	if _MAIN_MENU_CLASS_NAME in automationId:
-		_setObjectName(obj, _mainMenuName(obj, automationClasses))
+	mainMenuName = _mainMenuName(obj, automationClasses)
+	if mainMenuName is not None:
+		_setObjectName(obj, mainMenuName)
 		return
 	if _isRttiClassChain(_safeStringAttribute(obj, "name").strip()):
 		# Nothing better to offer, but NVDA should say "button" rather than

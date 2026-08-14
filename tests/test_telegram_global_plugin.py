@@ -274,7 +274,7 @@ class TelegramGlobalPluginTests(unittest.TestCase):
 
 		self.assertEqual(observedNames, ["translated:Main menu"])
 
-	def test_unlabeled_main_menu_control_falls_back_to_the_menu_name(self):
+	def test_an_unknown_main_menu_control_is_left_unnamed(self):
 		obj = _FakeObject(
 			automationId="class Window::MainMenu.class Ui::RippleButton",
 			className="class Ui::RippleButton",
@@ -282,6 +282,33 @@ class TelegramGlobalPluginTests(unittest.TestCase):
 		)
 
 		self.module._cleanTelegramControlName(obj)
+
+		self.assertEqual(obj.name, "")
+
+	def test_menu_ancestors_are_not_all_named_main_menu(self):
+		"""Naming every level made NVDA repeat "Main menu" once per Tab step."""
+		ancestors = [
+			_FakeObject(
+				automationId=f"class MainWindow.class Window::MainMenu.class {className}",
+				className=f"class {className}",
+				role=_Role.GROUPING,
+			)
+			for className in ("Ui::RpWidget", "Ui::ScrollArea", "Ui::LayerStackWidget")
+		]
+
+		for ancestor in ancestors:
+			self.module.GlobalPlugin().event_focusEntered(ancestor, lambda: None)
+
+		self.assertEqual([ancestor.name for ancestor in ancestors], ["", "", ""])
+
+	def test_the_menu_container_itself_is_still_named(self):
+		obj = _FakeObject(
+			automationId="class MainWindow.class Ui::LayerStackWidget.class Window::MainMenu",
+			className="class Window::MainMenu",
+			role=_Role.GROUPING,
+		)
+
+		self.module.GlobalPlugin().event_focusEntered(obj, lambda: None)
 
 		self.assertEqual(obj.name, "translated:Main menu")
 
