@@ -30,6 +30,7 @@ class _Role(Enum):
 	LIST = "list"
 	LISTITEM = "listItem"
 	BUTTON = "button"
+	GROUPING = "grouping"
 	MENUBUTTON = "menuButton"
 	DROPDOWNBUTTON = "dropDownButton"
 
@@ -84,6 +85,7 @@ class _FakeUIA:
 		*,
 		role=None,
 		name="",
+		providerName=None,
 		className="",
 		automationId="",
 		states=None,
@@ -95,6 +97,7 @@ class _FakeUIA:
 	):
 		self.role = role
 		self.name = name
+		self.providerName = name if providerName is None else providerName
 		self.UIAClassName = className
 		self.UIAAutomationId = automationId
 		self.states = set(states or ())
@@ -129,7 +132,7 @@ class _FakeUIA:
 			_CONTROL_TYPE: controlTypes.get(self.role),
 			_IS_OFFSCREEN: self.isOffscreen,
 			_IS_SELECTED: _State.SELECTED in self.states,
-			_NAME: self.name,
+			_NAME: self.providerName,
 		}
 		return values.get(propertyId)
 
@@ -164,6 +167,9 @@ class _FakeUIA:
 
 
 def _loadTelegramModule():
+	addonHandler = types.ModuleType("addonHandler")
+	addonHandler.initTranslation = lambda: None
+
 	api = types.ModuleType("api")
 	api.focusObject = None
 	api.foregroundObject = None
@@ -218,6 +224,7 @@ def _loadTelegramModule():
 	)
 
 	stubs = {
+		"addonHandler": addonHandler,
 		"api": api,
 		"appModuleHandler": appModuleHandler,
 		"controlTypes": controlTypes,
@@ -249,6 +256,133 @@ def _loadTelegramModule():
 class TelegramAppModuleTests(unittest.TestCase):
 	def setUp(self):
 		self.module = _loadTelegramModule()
+
+	def test_profile_label_is_applied_before_focus_announcement(self):
+		obj = _FakeUIA(
+			automationId="class Window::MainMenu.class Ui::UserpicButton",
+			className="class Ui::UserpicButton",
+			role=_Role.BUTTON,
+		)
+		observedNames = []
+
+		self.module.AppModule().event_gainFocus(obj, lambda: observedNames.append(obj.name))
+
+		self.assertEqual(observedNames, ["Profile"])
+
+	def test_accounts_label_is_applied_before_focus_announcement(self):
+		obj = _FakeUIA(
+			automationId="class Window::MainMenu.class Window::MainMenu::ToggleAccountsButton",
+			className="class Window::MainMenu::ToggleAccountsButton",
+			role=_Role.BUTTON,
+		)
+
+		self.module.AppModule().event_gainFocus(obj, lambda: None)
+
+		self.assertEqual(obj.name, "Accounts")
+
+	def test_only_the_main_menu_container_itself_is_named(self):
+		menu = _FakeUIA(
+			automationId="class MainWindow.class Ui::LayerStackWidget.class Window::MainMenu",
+			className="class Window::MainMenu",
+			role=_Role.GROUPING,
+		)
+		ancestor = _FakeUIA(
+			automationId="class MainWindow.class Window::MainMenu.class Ui::ScrollArea",
+			className="class Ui::ScrollArea",
+			role=_Role.GROUPING,
+		)
+
+		appModule = self.module.AppModule()
+		appModule.event_focusEntered(menu, lambda: None)
+		appModule.event_focusEntered(ancestor, lambda: None)
+
+		self.assertEqual(menu.name, "Main menu")
+		self.assertEqual(ancestor.name, "")
+
+	def test_existing_provider_name_is_preserved(self):
+		obj = _FakeUIA(
+			automationId="class Window::MainMenu.class Ui::UserpicButton",
+			className="class Ui::UserpicButton",
+			role=_Role.BUTTON,
+			name="",
+			providerName="Telegram profile",
+		)
+
+		self.module._cleanTelegramControlName(obj)
+
+		self.assertEqual(obj.name, "Telegram profile")
+
+	def test_composer_buttons_use_provider_name_or_translated_fallback(self):
+		stickers = _FakeUIA(
+			automationId="ButtonStickers",
+			role=_Role.BUTTON,
+			providerName="Emoji and stickers",
+		)
+		voice = _FakeUIA(automationId="btnVoiceMessage", role=_Role.BUTTON)
+
+		self.module._cleanTelegramControlName(stickers)
+		self.module._cleanTelegramControlName(voice)
+
+		self.assertEqual(stickers.name, "Emoji and stickers")
+		self.assertEqual(voice.name, "Record voice message")
+
+	def test_suggestion_uses_unique_descendant_text(self):
+		obj = _FakeUIA(
+			automationId="class MainWindow.class Dialogs::TopBarSuggestionContent",
+			className="class Dialogs::TopBarSuggestionContent",
+			children=[
+				_FakeUIA(name="Your Premium expires soon"),
+				_FakeUIA(name="Your Premium expires soon"),
+				_FakeUIA(name="Renew now"),
+			],
+		)
+
+		self.module._cleanTelegramControlName(obj)
+
+		self.assertEqual(obj.name, "Your Premium expires soon, Renew now")
+
+	def test_suggestion_and_dismiss_button_have_safe_fallbacks(self):
+		suggestion = _FakeUIA(
+			automationId="class MainWindow.class Dialogs::TopBarSuggestionContent",
+			className="class Dialogs::TopBarSuggestionContent",
+		)
+		dismiss = _FakeUIA(
+			automationId=("class MainWindow.class Dialogs::TopBarSuggestionContent.class Ui::IconButton"),
+			className="class Ui::IconButton",
+		)
+
+		self.module._cleanTelegramControlName(suggestion)
+		self.module._cleanTelegramControlName(dismiss)
+
+		self.assertEqual(suggestion.name, "Telegram suggestion")
+		self.assertEqual(dismiss.name, "Dismiss suggestion")
+
+	def test_class_chain_provider_name_does_not_block_known_label(self):
+		chain = "class Window::MainMenu.class Ui::UserpicButton"
+		obj = _FakeUIA(
+			automationId=chain,
+			className="class Ui::UserpicButton",
+			name=chain,
+			providerName=chain,
+		)
+
+		self.module._cleanTelegramControlName(obj)
+
+		self.assertEqual(obj.name, "Profile")
+
+	def test_unknown_control_stops_announcing_rtti_chain(self):
+		chain = "class MainWindow.class Ui::RpWidget.class Ui::IconButton"
+		obj = _FakeUIA(automationId=chain, className="class Ui::IconButton", name=chain)
+
+		self.module._cleanTelegramControlName(obj)
+
+		self.assertEqual(obj.name, "")
+
+	def test_rtti_chain_detection_does_not_consume_ordinary_names(self):
+		self.assertTrue(self.module._isRttiClassChain("class MainWindow.struct Dialogs::Widget"))
+		self.assertFalse(self.module._isRttiClassChain(""))
+		self.assertFalse(self.module._isRttiClassChain("class of 99"))
+		self.assertFalse(self.module._isRttiClassChain("holiday.photo.jpg"))
 
 	def test_chat_list_is_detected_by_msvc_rtti_class_name(self):
 		chatList = _FakeUIA(role=_Role.LIST, name="聊天", className="class Dialogs::InnerWidget")

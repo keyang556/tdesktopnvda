@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import addonHandler
 import api
 import appModuleHandler
 import controlTypes
@@ -18,11 +19,32 @@ import ui
 import UIAHandler
 
 
+# Qualified loading from the companion global plug-in can execute this module
+# outside NVDA's ordinary app-module importer. Avoid double initialization on
+# reload while ensuring translated strings are available in both paths.
+if "_" not in globals():
+	addonHandler.initTranslation()
+
+
 _CHAT_LIST_CLASS_NAME = "Dialogs::InnerWidget"
 _DIALOGS_WIDGET_CLASS_NAME = "Dialogs::Widget"
 _ICON_BUTTON_CLASS_NAME = "Ui::IconButton"
 _SIDEBAR_BUTTON_CLASS_NAME = "Ui::SideBarButton"
 _RTTI_CLASS_PREFIXES = ("class ", "struct ")
+_MAIN_MENU_CLASS_NAMES = {
+	"Window::MainMenu": _("Main menu"),
+	"Ui::UserpicButton": _("Profile"),
+	"Window::MainMenu::ToggleAccountsButton": _("Accounts"),
+}
+_COMPOSER_AUTOMATION_ID_NAMES = {
+	"ButtonStickers": _("Emoji, stickers, and GIFs"),
+	"btnVoiceMessage": _("Record voice message"),
+}
+_TOP_BAR_SUGGESTION_CLASS_NAME = "Dialogs::TopBarSuggestionContent"
+# The suggestion strip keeps its wording in child labels. Keep this walk small
+# so a focus event can never expand a meaningful part of Telegram's UIA tree.
+_MAX_SUGGESTION_TEXT_NODES = 24
+_MAX_SUGGESTION_TEXT_DEPTH = 4
 
 
 def _safeStringAttribute(obj: object, attribute: str) -> str:
@@ -40,6 +62,125 @@ def _normalizedClassName(obj: object) -> str:
 		if value.startswith(prefix):
 			return value[len(prefix) :]
 	return value
+
+
+def _isRttiClassChain(value: str) -> bool:
+	"""Return whether ``value`` consists only of RTTI class components."""
+	if not value:
+		return False
+	return all(_isRttiClassComponent(component) for component in value.split("."))
+
+
+def _isRttiClassComponent(component: str) -> bool:
+	component = component.strip()
+	for prefix in _RTTI_CLASS_PREFIXES:
+		if component.startswith(prefix):
+			bareName = component[len(prefix) :]
+			# Ordinary wording such as "class of 99" is not an RTTI type.
+			return bool(bareName) and not any(character.isspace() for character in bareName)
+	return False
+
+
+def _automationIdClassNames(automationId: str) -> tuple[str, ...]:
+	"""Return Telegram's RTTI class components from a UIA AutomationId."""
+	return tuple(
+		component.strip().removeprefix("class ").removeprefix("struct ")
+		for component in automationId.split(".")
+		if component.strip()
+	)
+
+
+def _setObjectName(obj: object, name: str) -> None:
+	try:
+		obj.name = name
+	except Exception:
+		pass
+
+
+def _providerName(obj: object) -> str:
+	"""Return Telegram's provider name, excluding RTTI placeholders."""
+	try:
+		rawName = obj.UIAElement.GetCurrentPropertyValue(UIAHandler.UIA_NamePropertyId)
+	except Exception:
+		try:
+			rawName = obj.UIAElement.CurrentName
+		except Exception:
+			rawName = ""
+	if not isinstance(rawName, str):
+		return ""
+	rawName = rawName.strip()
+	return "" if _isRttiClassChain(rawName) else rawName
+
+
+def _childObjects(obj: object) -> tuple[object, ...]:
+	try:
+		children = obj.children
+	except Exception:
+		return ()
+	try:
+		return tuple(children) if children else ()
+	except Exception:
+		return ()
+
+
+def _suggestionText(obj: object) -> str:
+	"""Read a suggestion strip's wording from a bounded set of descendants."""
+	parts: list[str] = []
+	seen: set[str] = set()
+	pending: list[tuple[object, int]] = [(obj, 0)]
+	visited = 0
+	while pending and visited < _MAX_SUGGESTION_TEXT_NODES:
+		node, depth = pending.pop(0)
+		visited += 1
+		if node is not obj:
+			text = _safeStringAttribute(node, "name").strip()
+			key = text.casefold()
+			if text and not _isRttiClassChain(text) and key not in seen:
+				seen.add(key)
+				parts.append(text)
+		if depth < _MAX_SUGGESTION_TEXT_DEPTH:
+			pending.extend((child, depth + 1) for child in _childObjects(node))
+	return ", ".join(parts)
+
+
+def _ownClassName(obj: object, automationClasses: tuple[str, ...]) -> str:
+	"""Return the control's class, rather than any ancestor in its ID chain."""
+	return _normalizedClassName(obj) or (automationClasses[-1] if automationClasses else "")
+
+
+def _cleanTelegramControlName(obj: object) -> None:
+	"""Fill missing names for known Telegram controls before NVDA speaks."""
+	automationId = _safeStringAttribute(obj, "UIAAutomationId")
+	providerName = _providerName(obj)
+
+	composerFallback = _COMPOSER_AUTOMATION_ID_NAMES.get(automationId)
+	if composerFallback is not None:
+		_setObjectName(obj, providerName or composerFallback)
+		return
+
+	automationClasses = _automationIdClassNames(automationId)
+	if _TOP_BAR_SUGGESTION_CLASS_NAME in automationClasses:
+		if _ownClassName(obj, automationClasses) == _TOP_BAR_SUGGESTION_CLASS_NAME:
+			fallback = _suggestionText(obj) or _("Telegram suggestion")
+		else:
+			fallback = _("Dismiss suggestion")
+		_setObjectName(obj, providerName or fallback)
+		return
+
+	# A real provider name always wins. Only known unnamed menu controls are
+	# filled, using the object's own class to avoid naming every menu ancestor.
+	if providerName:
+		# An NVDA overlay may have dropped the provider's useful cached name.
+		_setObjectName(obj, providerName)
+		return
+	menuName = _MAIN_MENU_CLASS_NAMES.get(_ownClassName(obj, automationClasses))
+	if menuName is not None:
+		_setObjectName(obj, menuName)
+		return
+
+	if _isRttiClassChain(_safeStringAttribute(obj, "name").strip()):
+		# Announcing the role alone is preferable to spelling a C++ class path.
+		_setObjectName(obj, "")
 
 
 def _automationIdContainsClass(obj: object, className: str) -> bool:
@@ -300,33 +441,49 @@ def _focusObject() -> object | None:
 
 
 class AppModule(appModuleHandler.AppModule):
+	def event_gainFocus(self, obj: object, nextHandler: Any) -> None:
+		_cleanTelegramControlName(obj)
+		nextHandler()
+
+	def event_focusEntered(self, obj: object, nextHandler: Any) -> None:
+		# The menu container is announced as a focus ancestor, not a target.
+		_cleanTelegramControlName(obj)
+		nextHandler()
+
 	@script(description=_("Move focus to chat list"), gesture="kb:alt+1")
 	def script_focusChatList(self, gesture: object) -> None:
-		root = _foregroundObject()
-		chatList = _findTelegramChatList(root) if root is not None else None
-		if chatList is None:
-			ui.message(_("Chat list not found"))
-			return
-
-		target = _findChatListItem(chatList)
-		if target is None:
-			ui.message(_("Chat list is empty"))
-			return
-
-		if _sameUIAElement(target, _uiaElement(_focusObject())):
-			name = _elementName(target)
-			if name:
-				ui.message(name)
-			return
-		if not _setElementFocus(target):
-			ui.message(_("Chat list not found"))
+		focusChatList()
 
 	@script(description=_("Open main menu"), gesture="kb:alt+m")
 	def script_openMainMenu(self, gesture: object) -> None:
-		root = _foregroundObject()
-		button = _findTelegramMainMenuButton(root) if root is not None else None
-		if button is None:
-			ui.message(_("Main menu is not available"))
-			return
-		if not _invokeElement(button):
-			ui.message(_("Main menu is not available"))
+		openMainMenu()
+
+
+def focusChatList() -> None:
+	"""Move focus to Telegram's selected chat, or its first chat."""
+	root = _foregroundObject()
+	chatList = _findTelegramChatList(root) if root is not None else None
+	if chatList is None:
+		ui.message(_("Chat list not found"))
+		return
+
+	target = _findChatListItem(chatList)
+	if target is None:
+		ui.message(_("Chat list is empty"))
+		return
+
+	if _sameUIAElement(target, _uiaElement(_focusObject())):
+		name = _elementName(target)
+		if name:
+			ui.message(name)
+		return
+	if not _setElementFocus(target):
+		ui.message(_("Chat list not found"))
+
+
+def openMainMenu() -> None:
+	"""Invoke Telegram's native main-menu button."""
+	root = _foregroundObject()
+	button = _findTelegramMainMenuButton(root) if root is not None else None
+	if button is None or not _invokeElement(button):
+		ui.message(_("Main menu is not available"))

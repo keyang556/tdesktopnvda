@@ -41,3 +41,24 @@ msgstr "開啟主選單"
 
 msgid "Main menu is not available"
 msgstr "主選單無法使用"
+
+msgid "Main menu"
+msgstr "主選單"
+
+msgid "Profile"
+msgstr "個人資料"
+
+msgid "Accounts"
+msgstr "帳號"
+
+msgid "Emoji, stickers, and GIFs"
+msgstr "表情符號、貼圖和 GIF"
+
+msgid "Record voice message"
+msgstr "錄製語音訊息"
+
+msgid "Telegram suggestion"
+msgstr "Telegram 建議"
+
+msgid "Dismiss suggestion"
+msgstr "關閉建議"

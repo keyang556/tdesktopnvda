@@ -2,14 +2,16 @@
 
 ## Overview
 
-Telegram Desktop Accessibility is an NVDA add-on for Telegram Desktop on Windows. It adds two direct navigation commands while leaving Telegram's native accessibility behavior and accessible names unchanged.
+Telegram Desktop Accessibility is an NVDA add-on for Telegram Desktop on Windows. It adds two direct navigation commands and fills missing accessible names on known Telegram controls.
 
 ## Features
 
 * `Alt+1` moves focus to the selected chat in the chat list, or to the first chat when no chat is selected.
 * `Alt+M` opens Telegram's main menu.
+* Structural main-menu controls such as Profile and Accounts, unnamed composer controls, and the top-bar suggestion receive useful accessible labels. A real name supplied by Telegram is always preserved.
+* A foreground-aware fallback keeps the two shortcuts and labels available when UnigramPlus or another installed add-on claims Telegram's shared app-module slot. It does not bind the shortcuts outside Telegram.
 * Chat detection uses Telegram's stable UIA class information rather than a translated control name, so the commands do not depend on Telegram's interface language.
-* Telegram continues to provide the names of chats, messages, buttons, and list items. The add-on does not replace or rewrite them.
+* Controls that expose only Telegram's internal C++ class path no longer announce that path. Other names from Telegram are not replaced.
 
 ## Usage
 
@@ -19,7 +21,7 @@ If `Alt+1` cannot find a chat list or the list is empty, NVDA reports that condi
 
 ## Implementation
 
-Telegram Desktop's patched Qt accessibility provider exposes RTTI-based UIA class names. The add-on identifies the chat list as `Dialogs::InnerWidget`, allowing it to work independently of the localized accessible name. The main menu command locates Telegram's native menu button inside `Dialogs::Widget` and invokes its existing action.
+Telegram Desktop's patched Qt accessibility provider exposes RTTI-based UIA class names. The add-on identifies the chat list as `Dialogs::InnerWidget`, allowing it to work independently of the localized accessible name. The main menu command locates Telegram's native menu button inside `Dialogs::Widget` and invokes its existing action. A small global plug-in resolves this add-on's app module by its qualified owner, avoiding the shared `appModules/telegram.py` lookup when another add-on wins it.
 
 ## Keyboard Shortcuts
 
