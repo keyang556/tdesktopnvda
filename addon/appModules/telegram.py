@@ -12,6 +12,7 @@ from typing import Any, cast
 import addonHandler
 import api
 import appModuleHandler
+from comInterfaces.UIAutomationClient import tagPOINT
 import controlTypes
 from NVDAObjects.UIA import UIA
 from scriptHandler import script
@@ -41,6 +42,13 @@ _COMPOSER_AUTOMATION_ID_NAMES = {
 	"btnVoiceMessage": _("Record voice message"),
 }
 _TOP_BAR_SUGGESTION_CLASS_NAME = "Dialogs::TopBarSuggestionContent"
+_MAIN_MENU_POINT_X_OFFSETS = (32, 56, 80)
+_MAIN_MENU_POINT_Y_OFFSETS = (52, 76, 100)
+# Telegram keeps folder buttons inside a scrolled container, while the menu
+# button above them is outside it.
+_SCROLLED_CONTAINER_CLASS_NAMES = ("Ui::ScrollArea", "Ui::ElasticScroll", "Ui::VerticalLayout")
+_MAX_UIA_PARENT_STEPS = 16
+_MAX_SIBLING_STEPS = 32
 # The suggestion strip keeps its wording in child labels. Keep this walk small
 # so a focus event can never expand a meaningful part of Telegram's UIA tree.
 _MAX_SUGGESTION_TEXT_NODES = 24
@@ -55,13 +63,17 @@ def _safeStringAttribute(obj: object, attribute: str) -> str:
 	return value if isinstance(value, str) else ""
 
 
-def _normalizedClassName(obj: object) -> str:
-	"""Return a Windows RTTI class name without its MSVC ``class`` prefix."""
-	value = _safeStringAttribute(obj, "UIAClassName").strip()
+def _normalizedRttiClassName(value: str) -> str:
+	"""Return a Windows RTTI class name without its MSVC type prefix."""
+	value = value.strip()
 	for prefix in _RTTI_CLASS_PREFIXES:
 		if value.startswith(prefix):
 			return value[len(prefix) :]
 	return value
+
+
+def _normalizedClassName(obj: object) -> str:
+	return _normalizedRttiClassName(_safeStringAttribute(obj, "UIAClassName"))
 
 
 def _isRttiClassChain(value: str) -> bool:
@@ -387,6 +399,107 @@ def _findTelegramMainMenuButton(root: object) -> Any | None:
 	)
 
 
+def _rawElementProperty(element: Any, propertyId: int) -> object | None:
+	try:
+		return element.GetCurrentPropertyValue(propertyId)
+	except Exception:
+		return None
+
+
+def _rawViewWalker() -> Any | None:
+	try:
+		client: Any = _uiaHandler().clientObject
+		return client.RawViewWalker
+	except Exception:
+		return None
+
+
+def _rawNormalizedClassName(element: Any) -> str:
+	className = _rawElementProperty(element, UIAHandler.UIA_ClassNamePropertyId)
+	return _normalizedRttiClassName(className) if isinstance(className, str) else ""
+
+
+def _rawAutomationIdClassNames(element: Any) -> tuple[str, ...]:
+	"""Return the RTTI class components of a raw element's AutomationId."""
+	automationId = _rawElementProperty(element, UIAHandler.UIA_AutomationIdPropertyId)
+	if not isinstance(automationId, str):
+		return ()
+	return tuple(_normalizedRttiClassName(component) for component in automationId.split("."))
+
+
+def _isFirstElementOfClass(element: Any, className: str) -> bool:
+	"""Return True when no preceding raw-view sibling shares this class."""
+	walker = _rawViewWalker()
+	if walker is None:
+		return False
+	sibling = element
+	for _step in range(_MAX_SIBLING_STEPS):
+		try:
+			sibling = walker.GetPreviousSiblingElement(sibling)
+		except Exception:
+			return False
+		if sibling is None:
+			return True
+		if _rawNormalizedClassName(sibling) == className:
+			return False
+	return False
+
+
+def _isRawTelegramMainMenuButton(element: Any) -> bool:
+	"""Identify the menu button without accepting nearby folder/icon buttons."""
+	if (
+		_rawElementProperty(element, UIAHandler.UIA_ControlTypePropertyId)
+		!= UIAHandler.UIA_ButtonControlTypeId
+		or _rawElementProperty(element, UIAHandler.UIA_IsOffscreenPropertyId) is not False
+	):
+		return False
+	className = _rawNormalizedClassName(element)
+	if className not in (_SIDEBAR_BUTTON_CLASS_NAME, _ICON_BUTTON_CLASS_NAME):
+		return False
+	automationClasses = _rawAutomationIdClassNames(element)
+	if any(component in _SCROLLED_CONTAINER_CLASS_NAMES for component in automationClasses):
+		return False
+	if className == _ICON_BUTTON_CLASS_NAME and _DIALOGS_WIDGET_CLASS_NAME not in automationClasses:
+		return False
+	return _isFirstElementOfClass(element, className)
+
+
+def _findTelegramMainMenuButtonFromPoints(root: object) -> Any | None:
+	"""Locate Telegram's top-left menu button without a subtree query."""
+	try:
+		location = root.location
+		if location.width <= 0 or location.height <= 0:
+			return None
+		client: Any = _uiaHandler().clientObject
+		walker = client.RawViewWalker
+	except Exception:
+		return None
+
+	for xOffset in _MAIN_MENU_POINT_X_OFFSETS:
+		x = round(location.left + min(xOffset, location.width * 0.25))
+		for yOffset in _MAIN_MENU_POINT_Y_OFFSETS:
+			y = round(location.top + min(yOffset, location.height * 0.25))
+			try:
+				element = client.ElementFromPoint(tagPOINT(x, y))
+				for _step in range(_MAX_UIA_PARENT_STEPS):
+					if element is None:
+						break
+					# Telegram paints a transparent MenuUnderButton group over
+					# the real button, which is its raw-view next sibling.
+					candidates = [element]
+					try:
+						candidates.append(walker.GetNextSiblingElement(element))
+					except Exception:
+						pass
+					for candidate in candidates:
+						if candidate is not None and _isRawTelegramMainMenuButton(candidate):
+							return candidate
+					element = walker.GetParentElement(element)
+			except Exception:
+				continue
+	return None
+
+
 def _sameUIAElement(left: Any, right: Any) -> bool:
 	if left is None or right is None:
 		return False
@@ -484,6 +597,8 @@ def focusChatList() -> None:
 def openMainMenu() -> None:
 	"""Invoke Telegram's native main-menu button."""
 	root = _foregroundObject()
-	button = _findTelegramMainMenuButton(root) if root is not None else None
+	button = _findTelegramMainMenuButtonFromPoints(root) if root is not None else None
+	if button is None and root is not None:
+		button = _findTelegramMainMenuButton(root)
 	if button is None or not _invokeElement(button):
 		ui.message(_("Main menu is not available"))

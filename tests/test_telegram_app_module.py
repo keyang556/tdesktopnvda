@@ -48,7 +48,28 @@ class _FakeCondition:
 		return self._predicate(element)
 
 
+class _FakeWalker:
+	def GetParentElement(self, element):
+		return element.parent
+
+	@staticmethod
+	def _siblings(element):
+		return element.parent.children if element.parent is not None else [element]
+
+	def GetPreviousSiblingElement(self, element):
+		siblings = self._siblings(element)
+		index = siblings.index(element)
+		return siblings[index - 1] if index > 0 else None
+
+	def GetNextSiblingElement(self, element):
+		siblings = self._siblings(element)
+		index = siblings.index(element)
+		return siblings[index + 1] if index + 1 < len(siblings) else None
+
+
 class _FakeClient:
+	RawViewWalker = _FakeWalker()
+
 	def CreatePropertyCondition(self, propertyId, value):
 		return _FakeCondition(lambda element: element.propertyValue(propertyId) == value)
 
@@ -102,6 +123,9 @@ class _FakeUIA:
 		self.UIAAutomationId = automationId
 		self.states = set(states or ())
 		self.children = list(children or ())
+		self.parent = None
+		for child in self.children:
+			child.parent = self
 		self.isOffscreen = isOffscreen
 		self.failQuery = failQuery
 		self.failAction = failAction
@@ -223,10 +247,16 @@ def _loadTelegramModule():
 		baseCacheRequest=object(),
 	)
 
+	comInterfaces = types.ModuleType("comInterfaces")
+	uiaClient = types.ModuleType("comInterfaces.UIAutomationClient")
+	uiaClient.tagPOINT = lambda x, y: types.SimpleNamespace(x=x, y=y)
+
 	stubs = {
 		"addonHandler": addonHandler,
 		"api": api,
 		"appModuleHandler": appModuleHandler,
+		"comInterfaces": comInterfaces,
+		"comInterfaces.UIAutomationClient": uiaClient,
 		"controlTypes": controlTypes,
 		"NVDAObjects": nvdaObjects,
 		"NVDAObjects.UIA": uiaModule,
@@ -536,6 +566,126 @@ class TelegramAppModuleTests(unittest.TestCase):
 
 		self.assertEqual(sidebarMenu.actionCount, 1)
 		self.assertEqual(search.actionCount, 0)
+
+	def test_point_lookup_accepts_both_main_menu_layouts(self):
+		sidebarMenu = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::SideBarButton",
+			automationId="class MainWindow.class Ui::RpWidget.class Ui::SideBarButton",
+		)
+		dialogsMenu = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::IconButton",
+			automationId="class Dialogs::Widget.class Ui::RpWidget.class Ui::IconButton",
+		)
+		_FakeUIA(children=[sidebarMenu])
+		_FakeUIA(children=[dialogsMenu])
+
+		self.assertTrue(self.module._isRawTelegramMainMenuButton(sidebarMenu))
+		self.assertTrue(self.module._isRawTelegramMainMenuButton(dialogsMenu))
+
+	def test_point_lookup_rejects_offscreen_and_unrelated_buttons(self):
+		offscreen = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::SideBarButton",
+			automationId="class MainWindow.class Ui::SideBarButton",
+			isOffscreen=True,
+		)
+		unrelated = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::IconButton",
+			automationId="class Calls::Panel.class Ui::IconButton",
+		)
+		notAButton = _FakeUIA(role=_Role.LIST, className="class Ui::SideBarButton")
+		for element in (offscreen, unrelated, notAButton):
+			_FakeUIA(children=[element])
+
+		self.assertFalse(self.module._isRawTelegramMainMenuButton(offscreen))
+		self.assertFalse(self.module._isRawTelegramMainMenuButton(unrelated))
+		self.assertFalse(self.module._isRawTelegramMainMenuButton(notAButton))
+
+	def test_point_lookup_rejects_later_and_scrolled_sidebar_buttons(self):
+		menu = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::SideBarButton",
+			automationId="class MainWindow.class Ui::RpWidget.class Ui::SideBarButton",
+		)
+		folder = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::SideBarButton",
+			automationId="class MainWindow.class Ui::RpWidget.class Ui::SideBarButton",
+		)
+		scrolledFolder = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::SideBarButton",
+			automationId=(
+				"class MainWindow.class Ui::ScrollArea.class Ui::VerticalLayout.class Ui::SideBarButton"
+			),
+		)
+		_FakeUIA(children=[menu, folder])
+		_FakeUIA(children=[scrolledFolder])
+
+		self.assertTrue(self.module._isRawTelegramMainMenuButton(menu))
+		self.assertFalse(self.module._isRawTelegramMainMenuButton(folder))
+		self.assertFalse(self.module._isRawTelegramMainMenuButton(scrolledFolder))
+
+	def test_point_lookup_invokes_first_menu_without_subtree_query(self):
+		menu = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::IconButton",
+			automationId="class Dialogs::Widget.class Ui::IconButton",
+		)
+		window = _FakeUIA(children=[menu], failQuery=True)
+		window.location = types.SimpleNamespace(left=0, top=0, width=1200, height=800)
+		self.module._testApi.foregroundObject = window
+		self.module._uiaHandler().clientObject.ElementFromPoint = lambda point: menu
+
+		self.module.AppModule().script_openMainMenu(None)
+
+		self.assertEqual(menu.actionCount, 1)
+		self.assertEqual(self.module._testUi.messages, [])
+
+	def test_point_lookup_checks_button_beside_transparent_overlay(self):
+		overlay = _FakeUIA(
+			role=_Role.GROUPING,
+			className="class Ui::RpWidget",
+			automationId="class Dialogs::Widget.class MenuUnderButton",
+		)
+		menu = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::IconButton",
+			automationId="class Dialogs::Widget.class Ui::IconButton",
+		)
+		window = _FakeUIA(children=[overlay, menu], failQuery=True)
+		window.location = types.SimpleNamespace(left=0, top=0, width=1200, height=800)
+		self.module._testApi.foregroundObject = window
+		self.module._uiaHandler().clientObject.ElementFromPoint = lambda point: overlay
+
+		self.module.AppModule().script_openMainMenu(None)
+
+		self.assertEqual(menu.actionCount, 1)
+		self.assertEqual(self.module._testUi.messages, [])
+
+	def test_point_lookup_falls_back_when_a_neighbouring_button_is_hit(self):
+		menu = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::IconButton",
+			automationId="class Dialogs::Widget.class Ui::IconButton",
+		)
+		neighbour = _FakeUIA(
+			role=_Role.BUTTON,
+			className="class Ui::IconButton",
+			automationId="class Dialogs::Widget.class Ui::IconButton",
+		)
+		window = _FakeUIA(children=[menu, neighbour])
+		window.location = types.SimpleNamespace(left=0, top=0, width=1200, height=800)
+		self.module._testApi.foregroundObject = window
+		self.module._uiaHandler().clientObject.ElementFromPoint = lambda point: neighbour
+
+		self.module.AppModule().script_openMainMenu(None)
+
+		self.assertEqual(menu.actionCount, 1)
+		self.assertEqual(neighbour.actionCount, 0)
 
 	def test_alt_m_ignores_offscreen_button(self):
 		button = _FakeUIA(
