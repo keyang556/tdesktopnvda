@@ -9,24 +9,34 @@ import unittest
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "addon" / "globalPlugins" / "telegramDesktop.py"
 
+ADDON_SUMMARY = "Telegram Desktop Accessibility"
+
 
 class _FakeGlobalPlugin:
-	def __init__(self):
-		self.boundGestures = {}
-
-	def bindGestures(self, gestures):
-		self.boundGestures.update(gestures)
-
-	def removeGestureBinding(self, gesture):
-		if gesture not in self.boundGestures:
-			raise LookupError(gesture)
-		del self.boundGestures[gesture]
+	pass
 
 
 class _FakeObject:
 	def __init__(self, appName="telegram"):
 		self.appModule = types.SimpleNamespace(appName=appName)
 		self.name = ""
+
+
+class _FakeGesture:
+	"""A keyboard gesture that records whether NVDA passed it to the application."""
+
+	def __init__(self):
+		self.sent = 0
+
+	def send(self):
+		self.sent += 1
+
+
+class _UnsendableGesture:
+	"""A gesture source such as braille, which cannot be sent to the application."""
+
+	def send(self):
+		raise NotImplementedError
 
 
 def _loadGlobalPluginModule():
@@ -36,7 +46,10 @@ def _loadGlobalPluginModule():
 	telegramModule.openMainMenu = lambda: telegramModule.calls.append("menu")
 	telegramModule._cleanTelegramControlName = lambda obj: setattr(obj, "name", "cleaned")
 
-	codeAddon = types.SimpleNamespace(loadModule=lambda name: telegramModule)
+	codeAddon = types.SimpleNamespace(
+		loadModule=lambda name: telegramModule,
+		manifest={"summary": ADDON_SUMMARY},
+	)
 	addonHandler = types.ModuleType("addonHandler")
 	addonHandler.initTranslation = lambda: None
 	addonHandler.getCodeAddon = lambda: codeAddon
@@ -48,9 +61,18 @@ def _loadGlobalPluginModule():
 	globalPluginHandler = types.ModuleType("globalPluginHandler")
 	globalPluginHandler.GlobalPlugin = _FakeGlobalPlugin
 
-	def fakeScript(*, description):
+	logHandler = types.ModuleType("logHandler")
+	logHandler.log = types.SimpleNamespace(debugWarning=lambda *args, **kwargs: None)
+
+	def fakeScript(*, description, gesture=None, gestures=None, **kwargs):
+		"""Mirror the parts of NVDA's script decorator this add-on relies on."""
+		collected = list(gestures or [])
+		if gesture is not None:
+			collected.append(gesture)
+
 		def decorator(function):
 			function.__doc__ = description
+			function.gestures = collected
 			return function
 
 		return decorator
@@ -66,6 +88,7 @@ def _loadGlobalPluginModule():
 		"api": api,
 		"globalPluginHandler": globalPluginHandler,
 		"importlib": importlibStub,
+		"logHandler": logHandler,
 		"scriptHandler": scriptHandler,
 	}
 	previous = {name: sys.modules.get(name) for name in stubs}
@@ -90,41 +113,70 @@ def _loadGlobalPluginModule():
 class TelegramGlobalPluginTests(unittest.TestCase):
 	def setUp(self):
 		self.module = _loadGlobalPluginModule()
-
-	def test_binds_only_the_two_commands_while_telegram_is_foreground(self):
 		self.module._testApi.foregroundObject = _FakeObject()
 
-		plugin = self.module.GlobalPlugin()
+	def test_default_gestures_are_declared_so_nvda_can_reassign_them(self):
+		self.assertEqual(self.module.GlobalPlugin.script_focusChatList.gestures, ["kb:alt+1"])
+		self.assertEqual(self.module.GlobalPlugin.script_openMainMenu.gestures, ["kb:alt+m"])
 
+	def test_commands_are_grouped_under_this_addon_in_the_gesture_editor(self):
+		self.assertEqual(self.module.GlobalPlugin.scriptCategory, ADDON_SUMMARY)
+
+	def test_commands_are_described_for_the_gesture_editor(self):
 		self.assertEqual(
-			plugin.boundGestures,
-			{"kb:alt+1": "focusChatList", "kb:alt+m": "openMainMenu"},
+			self.module.GlobalPlugin.script_focusChatList.__doc__,
+			"Move focus to chat list",
 		)
-
-	def test_foreground_change_removes_global_bindings(self):
-		self.module._testApi.foregroundObject = _FakeObject()
-		plugin = self.module.GlobalPlugin()
-
-		plugin.event_foreground(_FakeObject("notepad"), lambda: None)
-
-		self.assertEqual(plugin.boundGestures, {})
-
-	def test_unreadable_foreground_fails_closed_on_focus(self):
-		self.module._testApi.foregroundObject = _FakeObject()
-		plugin = self.module.GlobalPlugin()
-		self.module._testApi.getForegroundObject = lambda: (_ for _ in ()).throw(RuntimeError())
-
-		plugin.event_gainFocus(_FakeObject(), lambda: None)
-
-		self.assertEqual(plugin.boundGestures, {})
+		self.assertEqual(self.module.GlobalPlugin.script_openMainMenu.__doc__, "Open main menu")
 
 	def test_commands_forward_to_this_addons_qualified_app_module(self):
 		plugin = self.module.GlobalPlugin()
 
-		plugin.script_focusChatList(None)
-		plugin.script_openMainMenu(None)
+		plugin.script_focusChatList(_FakeGesture())
+		plugin.script_openMainMenu(_FakeGesture())
 
 		self.assertEqual(self.module._testTelegramModule.calls, ["focus", "menu"])
+
+	def test_commands_do_nothing_outside_telegram(self):
+		self.module._testApi.foregroundObject = _FakeObject("notepad")
+		plugin = self.module.GlobalPlugin()
+
+		plugin.script_focusChatList(_FakeGesture())
+		plugin.script_openMainMenu(_FakeGesture())
+
+		self.assertEqual(self.module._testTelegramModule.calls, [])
+
+	def test_gesture_reaches_the_application_outside_telegram(self):
+		self.module._testApi.foregroundObject = _FakeObject("notepad")
+		gesture = _FakeGesture()
+
+		self.module.GlobalPlugin().script_focusChatList(gesture)
+
+		self.assertEqual(gesture.sent, 1)
+
+	def test_gesture_is_kept_from_the_application_inside_telegram(self):
+		gesture = _FakeGesture()
+
+		self.module.GlobalPlugin().script_focusChatList(gesture)
+
+		self.assertEqual(gesture.sent, 0)
+
+	def test_unsendable_gesture_does_not_break_the_command(self):
+		self.module._testApi.foregroundObject = _FakeObject("notepad")
+
+		self.module.GlobalPlugin().script_openMainMenu(_UnsendableGesture())
+
+		self.assertEqual(self.module._testTelegramModule.calls, [])
+
+	def test_unreadable_foreground_fails_closed(self):
+		plugin = self.module.GlobalPlugin()
+		self.module._testApi.getForegroundObject = lambda: (_ for _ in ()).throw(RuntimeError())
+		gesture = _FakeGesture()
+
+		plugin.script_focusChatList(gesture)
+
+		self.assertEqual(self.module._testTelegramModule.calls, [])
+		self.assertEqual(gesture.sent, 1)
 
 	def test_telegram_name_is_cleaned_before_focus_continues(self):
 		obj = _FakeObject()

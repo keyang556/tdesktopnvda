@@ -8,6 +8,7 @@ Telegram Desktop Accessibility is an NVDA add-on for Telegram Desktop on Windows
 
 * `Alt+1` moves focus to the selected chat in the chat list, or to the first chat when no chat is selected.
 * `Alt+M` opens Telegram's main menu.
+* Both commands are listed in NVDA's Input Gestures dialog under "Telegram Desktop Accessibility", so either default shortcut can be reassigned or removed. Outside Telegram the assigned keystroke reaches the application unchanged.
 * Structural main-menu controls such as Profile and Accounts, unnamed composer controls, and the top-bar suggestion receive useful accessible labels. A real name supplied by Telegram is always preserved.
 * A foreground-aware fallback keeps the two shortcuts and labels available when UnigramPlus or another installed add-on claims Telegram's shared app-module slot. It does not bind the shortcuts outside Telegram.
 * Chat detection uses Telegram's stable UIA class information rather than a translated control name, so the commands do not depend on Telegram's interface language.
@@ -19,9 +20,11 @@ Install the add-on, restart NVDA when prompted, and use the two add-on shortcuts
 
 If `Alt+1` cannot find a chat list or the list is empty, NVDA reports that condition. If `Alt+M` is unavailable on the current Telegram screen, NVDA reports that the main menu is not available.
 
+To use different keys, open NVDA menu > Preferences > Input Gestures, expand the "Telegram Desktop Accessibility" category, and add or remove a gesture for either command.
+
 ## Implementation
 
-Telegram Desktop's patched Qt accessibility provider exposes RTTI-based UIA class names. The add-on identifies the chat list as `Dialogs::InnerWidget`, allowing it to work independently of the localized accessible name. The main menu command finds Telegram's native button by UIA point hit-testing near the top-left corner, supporting both `Dialogs::Widget` and folder-sidebar layouts, then falls back to the existing provider-side subtree query. A small global plug-in resolves this add-on's app module by its qualified owner, avoiding the shared `appModules/telegram.py` lookup when another add-on wins it.
+Telegram Desktop's patched Qt accessibility provider exposes RTTI-based UIA class names. The add-on identifies the chat list as `Dialogs::InnerWidget`, allowing it to work independently of the localized accessible name. The main menu command finds Telegram's native button by UIA point hit-testing near the top-left corner, supporting both `Dialogs::Widget` and folder-sidebar layouts, then falls back to the existing provider-side subtree query. A global plug-in owns both commands and resolves this add-on's app module by its qualified owner, avoiding the shared `appModules/telegram.py` lookup when another add-on wins it. Defining the commands once, in a plug-in that is always running, is what keeps a single reassignable entry per command in NVDA's Input Gestures dialog; each command checks the foreground itself and passes its gesture on when Telegram is not in front.
 
 ## Keyboard Shortcuts
 

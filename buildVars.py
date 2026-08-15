@@ -21,7 +21,7 @@ Adds Alt+1 to move focus to the chat list and Alt+M to open Telegram's main menu
 	addon_sourceURL=None,
 	addon_docFileName="readme.html",
 	addon_minimumNVDAVersion="2024.1.0",
-	addon_lastTestedNVDAVersion="2026.1.0",
+	addon_lastTestedNVDAVersion="2026.3.0",
 	addon_updateChannel=None,
 	addon_license="GNU General Public License version 2",
 	addon_licenseURL=None,
@@ -29,6 +29,7 @@ Adds Alt+1 to move focus to the chat list and Alt+M to open Telegram's main menu
 
 pythonSources: list[str] = [
 	"addon/appModules/*.py",
+	"addon/globalPlugins/*.py",
 ]
 i18nSources: list[str] = pythonSources + ["buildVars.py"]
 excludedFiles: list[str] = [

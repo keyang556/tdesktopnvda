@@ -16,7 +16,6 @@ from comInterfaces.UIAutomationClient import IUIAutomationInvokePattern, tagPOIN
 import controlTypes
 from logHandler import log
 from NVDAObjects.UIA import UIA
-from scriptHandler import script
 import ui
 import UIAHandler
 
@@ -659,6 +658,15 @@ def _focusObject() -> object | None:
 
 
 class AppModule(appModuleHandler.AppModule):
+	"""Label Telegram's unnamed controls.
+
+	The add-on's commands are not defined here. NVDA would then list them in the
+	Input Gestures dialog once per class, and the two entries share a category
+	and description, so only one of them would survive and stay reassignable.
+	``globalPlugins.telegramDesktop.GlobalPlugin`` owns them instead and calls
+	the module level functions below.
+	"""
+
 	def event_gainFocus(self, obj: object, nextHandler: Any) -> None:
 		_cleanTelegramControlName(obj)
 		nextHandler()
@@ -667,14 +675,6 @@ class AppModule(appModuleHandler.AppModule):
 		# The menu container is announced as a focus ancestor, not a target.
 		_cleanTelegramControlName(obj)
 		nextHandler()
-
-	@script(description=_("Move focus to chat list"), gesture="kb:alt+1")
-	def script_focusChatList(self, gesture: object) -> None:
-		focusChatList()
-
-	@script(description=_("Open main menu"), gesture="kb:alt+m")
-	def script_openMainMenu(self, gesture: object) -> None:
-		openMainMenu()
 
 
 def focusChatList() -> None:

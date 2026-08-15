@@ -8,6 +8,7 @@ Telegram 电脑版 NVDA 无障碍附加组件适用于 Windows 版 Telegram Desk
 
 * `Alt+1` 将焦点移到会话列表中已选中的会话；没有选中项目时，则移到第一个会话。
 * `Alt+M` 打开 Telegram 主菜单。
+* 两个命令都会列在 NVDA 的“输入手势”对话框中，归类于“Telegram Desktop Accessibility”，因此可以自行更改或移除默认快捷键。在 Telegram 以外的程序中，按键会原样传给该程序。
 * 会话识别使用 Telegram 稳定的 UIA 类信息，不使用翻译后的控件名称，因此不受 Telegram 界面语言影响。
 * 会话、消息、按钮和列表项目的名称仍由 Telegram 提供；附加组件不会替换或改写这些名称。
 
@@ -16,6 +17,8 @@ Telegram 电脑版 NVDA 无障碍附加组件适用于 Windows 版 Telegram Desk
 安装附加组件并按提示重新启动 NVDA 后，即可在 Telegram 主窗口使用这两个快捷键，无需额外配置。
 
 如果 `Alt+1` 找不到会话列表或列表为空，NVDA 会说明原因。如果当前 Telegram 界面没有主菜单，按下 `Alt+M` 时 NVDA 会提示主菜单不可用。
+
+若要改用其他按键，请打开“NVDA 菜单”>“首选项”>“输入手势”，展开“Telegram Desktop Accessibility”分类，再为任一命令添加或移除手势。
 
 ## 实现方式
 

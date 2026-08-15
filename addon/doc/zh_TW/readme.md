@@ -8,6 +8,7 @@ Telegram 電腦版 NVDA 無障礙附加元件適用於 Windows 版 Telegram Desk
 
 * `Alt+1` 將焦點移至聊天室清單中已選取的聊天室；沒有選取項目時，則移至第一個聊天室。
 * `Alt+M` 開啟 Telegram 主選單。
+* 兩個指令都會列在 NVDA 的「輸入手勢」對話方塊中，歸類於「Telegram Desktop Accessibility」，因此可以自行變更或移除預設快速鍵。在 Telegram 以外的程式，按鍵會原封不動地傳給該程式。
 * 聊天室識別使用 Telegram 穩定的 UIA 類別資訊，不使用翻譯後的控制項名稱，因此不受 Telegram 介面語言影響。
 * 聊天室、訊息、按鈕及清單項目的名稱仍由 Telegram 提供；附加元件不會取代或改寫這些名稱。
 
@@ -16,6 +17,8 @@ Telegram 電腦版 NVDA 無障礙附加元件適用於 Windows 版 Telegram Desk
 安裝附加元件並依提示重新啟動 NVDA 後，即可在 Telegram 主視窗使用這兩個快捷鍵，不需要另外設定。
 
 如果 `Alt+1` 找不到聊天室清單或清單是空的，NVDA 會說明原因。如果目前的 Telegram 畫面沒有主選單，按下 `Alt+M` 時 NVDA 會提示主選單無法使用。
+
+若要改用其他按鍵，請開啟「NVDA 功能表」>「偏好設定」>「輸入手勢」，展開「Telegram Desktop Accessibility」分類，再為任一指令新增或移除手勢。
 
 ## 實作方式
 
