@@ -246,17 +246,6 @@ def _loadTelegramModule(*, injectTranslation=True):
 	uiaModule = types.ModuleType("NVDAObjects.UIA")
 	uiaModule.UIA = _FakeUIA
 
-	def fakeScript(*, description, gesture):
-		def decorator(function):
-			function.__doc__ = description
-			function.gesture = gesture
-			return function
-
-		return decorator
-
-	scriptHandler = types.ModuleType("scriptHandler")
-	scriptHandler.script = fakeScript
-
 	ui = types.ModuleType("ui")
 	ui.messages = []
 	ui.message = ui.messages.append
@@ -297,7 +286,6 @@ def _loadTelegramModule(*, injectTranslation=True):
 		"logHandler": logHandler,
 		"NVDAObjects": nvdaObjects,
 		"NVDAObjects.UIA": uiaModule,
-		"scriptHandler": scriptHandler,
 		"ui": ui,
 		"UIAHandler": uiaHandler,
 	}
@@ -483,7 +471,7 @@ class TelegramAppModuleTests(unittest.TestCase):
 		)
 		self.module._testApi.foregroundObject = _FakeUIA(children=[chatList])
 
-		self.module.AppModule().script_focusChatList(None)
+		self.module.focusChatList()
 
 		self.assertFalse(first.focused)
 		self.assertTrue(selected.focused)
@@ -498,7 +486,7 @@ class TelegramAppModuleTests(unittest.TestCase):
 		)
 		self.module._testApi.foregroundObject = chatList
 
-		self.module.AppModule().script_focusChatList(None)
+		self.module.focusChatList()
 
 		self.assertTrue(first.focused)
 
@@ -512,7 +500,7 @@ class TelegramAppModuleTests(unittest.TestCase):
 		self.module._testApi.foregroundObject = chatList
 		self.module._testApi.focusObject = current
 
-		self.module.AppModule().script_focusChatList(None)
+		self.module.focusChatList()
 
 		self.assertEqual(self.module._testUi.messages, ["Saved Messages"])
 
@@ -522,21 +510,21 @@ class TelegramAppModuleTests(unittest.TestCase):
 			className="class Dialogs::InnerWidget",
 		)
 
-		self.module.AppModule().script_focusChatList(None)
+		self.module.focusChatList()
 
 		self.assertEqual(self.module._testUi.messages, ["Chat list is empty"])
 
 	def test_alt_1_does_not_match_localized_name_without_class(self):
 		self.module._testApi.foregroundObject = _FakeUIA(role=_Role.LIST, name="Chats")
 
-		self.module.AppModule().script_focusChatList(None)
+		self.module.focusChatList()
 
 		self.assertEqual(self.module._testUi.messages, ["Chat list not found"])
 
 	def test_alt_1_contains_native_provider_query_failure(self):
 		self.module._testApi.foregroundObject = _FakeUIA(failQuery=True)
 
-		self.module.AppModule().script_focusChatList(None)
+		self.module.focusChatList()
 
 		self.assertEqual(self.module._testUi.messages, ["Chat list not found"])
 
@@ -584,7 +572,7 @@ class TelegramAppModuleTests(unittest.TestCase):
 		)
 		self.module._testApi.foregroundObject = _FakeUIA(children=[button, other])
 
-		self.module.AppModule().script_openMainMenu(None)
+		self.module.openMainMenu()
 
 		self.assertEqual(button.actionCount, 1)
 		self.assertEqual(other.actionCount, 0)
@@ -605,7 +593,7 @@ class TelegramAppModuleTests(unittest.TestCase):
 		)
 		self.module._testApi.foregroundObject = _FakeUIA(children=[search, sidebarMenu])
 
-		self.module.AppModule().script_openMainMenu(None)
+		self.module.openMainMenu()
 
 		self.assertEqual(sidebarMenu.actionCount, 1)
 		self.assertEqual(search.actionCount, 0)
@@ -683,7 +671,7 @@ class TelegramAppModuleTests(unittest.TestCase):
 		self.module._testApi.foregroundObject = window
 		self.module._uiaHandler().clientObject.ElementFromPoint = lambda point: menu
 
-		self.module.AppModule().script_openMainMenu(None)
+		self.module.openMainMenu()
 
 		self.assertEqual(menu.actionCount, 1)
 		self.assertEqual(self.module._testUi.messages, [])
@@ -702,7 +690,7 @@ class TelegramAppModuleTests(unittest.TestCase):
 			lambda point: menu if 7 <= point.x <= 47 and 7 <= point.y <= 47 else searchControls
 		)
 
-		self.module.AppModule().script_openMainMenu(None)
+		self.module.openMainMenu()
 
 		self.assertEqual(menu.actionCount, 1)
 		self.assertEqual(self.module._testUi.messages, [])
@@ -747,7 +735,7 @@ class TelegramAppModuleTests(unittest.TestCase):
 		self.module._testApi.foregroundObject = window
 		self.module._uiaHandler().clientObject.ElementFromPoint = lambda point: overlay
 
-		self.module.AppModule().script_openMainMenu(None)
+		self.module.openMainMenu()
 
 		self.assertEqual(menu.actionCount, 1)
 		self.assertEqual(self.module._testUi.messages, [])
@@ -765,7 +753,7 @@ class TelegramAppModuleTests(unittest.TestCase):
 				self.module._testApi.foregroundObject = window
 				self.module._uiaHandler().clientObject.ElementFromPoint = lambda point: menu
 
-				self.module.AppModule().script_openMainMenu(None)
+				self.module.openMainMenu()
 
 				self.assertEqual(menu.actionCount, 1)
 		self.assertEqual(self.module._testUi.messages, [])
@@ -787,7 +775,7 @@ class TelegramAppModuleTests(unittest.TestCase):
 		self.module._testApi.foregroundObject = window
 		self.module._uiaHandler().clientObject.ElementFromPoint = lambda point: stalePointButton
 
-		self.module.AppModule().script_openMainMenu(None)
+		self.module.openMainMenu()
 
 		self.assertEqual(fallbackMenu.actionCount, 1)
 		self.assertEqual(self.module._testUi.messages, [])
@@ -806,7 +794,7 @@ class TelegramAppModuleTests(unittest.TestCase):
 		self.module._testApi.foregroundObject = window
 		self.module._uiaHandler().clientObject.ElementFromPoint = lambda point: window
 
-		self.module.AppModule().script_openMainMenu(None)
+		self.module.openMainMenu()
 
 		self.assertEqual(menu.actionCount, 1)
 		self.assertEqual(self.module._testUi.messages, [])
@@ -854,7 +842,7 @@ class TelegramAppModuleTests(unittest.TestCase):
 		client.ElementFromPoint = lambda point: menu
 		self.module._testApi.foregroundObject = window
 
-		self.module.AppModule().script_openMainMenu(None)
+		self.module.openMainMenu()
 
 		self.assertEqual(menu.actionCount, 1)
 		self.assertEqual(self.module._testUi.messages, [])
@@ -875,7 +863,7 @@ class TelegramAppModuleTests(unittest.TestCase):
 		self.module._testApi.desktopObject.children = [mainWindow]
 		self.module._uiaHandler().clientObject.ElementFromPoint = lambda point: menu
 
-		self.module.AppModule().script_openMainMenu(None)
+		self.module.openMainMenu()
 
 		self.assertEqual(menu.actionCount, 1)
 		self.assertEqual(self.module._testUi.messages, [])
@@ -896,7 +884,7 @@ class TelegramAppModuleTests(unittest.TestCase):
 		self.module._testApi.foregroundObject = window
 		self.module._uiaHandler().clientObject.ElementFromPoint = lambda point: neighbour
 
-		self.module.AppModule().script_openMainMenu(None)
+		self.module.openMainMenu()
 
 		self.assertEqual(menu.actionCount, 1)
 		self.assertEqual(neighbour.actionCount, 0)
@@ -910,7 +898,7 @@ class TelegramAppModuleTests(unittest.TestCase):
 		)
 		self.module._testApi.foregroundObject = _FakeUIA(children=[button])
 
-		self.module.AppModule().script_openMainMenu(None)
+		self.module.openMainMenu()
 
 		self.assertEqual(button.actionCount, 0)
 		self.assertEqual(self.module._testUi.messages, ["Main menu is not available"])
@@ -918,7 +906,7 @@ class TelegramAppModuleTests(unittest.TestCase):
 	def test_alt_m_reports_when_main_menu_is_unavailable(self):
 		self.module._testApi.foregroundObject = _FakeUIA()
 
-		self.module.AppModule().script_openMainMenu(None)
+		self.module.openMainMenu()
 
 		self.assertEqual(self.module._testUi.messages, ["Main menu is not available"])
 
@@ -931,11 +919,11 @@ class TelegramAppModuleTests(unittest.TestCase):
 		)
 		self.module._testApi.foregroundObject = button
 
-		self.module.AppModule().script_openMainMenu(None)
+		self.module.openMainMenu()
 
 		self.assertEqual(self.module._testUi.messages, ["Main menu is not available"])
 
-	def test_shortcut_scripts_do_not_expand_recursive_descendants(self):
+	def test_shortcut_commands_do_not_expand_recursive_descendants(self):
 		chat = _FakeUIA(role=_Role.LISTITEM, name="Alice")
 		chatList = _FakeUIA(
 			role=_Role.LIST,
@@ -944,13 +932,17 @@ class TelegramAppModuleTests(unittest.TestCase):
 		)
 		self.module._testApi.foregroundObject = _FakeUIA(children=[chatList])
 
-		self.module.AppModule().script_focusChatList(None)
+		self.module.focusChatList()
 
 		self.assertTrue(chat.focused)
 
-	def test_shortcut_gestures_match_unigram_plus(self):
-		self.assertEqual(self.module.AppModule.script_focusChatList.gesture, "kb:alt+1")
-		self.assertEqual(self.module.AppModule.script_openMainMenu.gesture, "kb:alt+m")
+	def test_app_module_leaves_the_commands_to_the_global_plugin(self):
+		# Defining them here as well would put a second, identically described
+		# entry in NVDA's Input Gestures dialog, where only one of the two can
+		# be reassigned.
+		self.assertFalse(
+			[name for name in dir(self.module.AppModule) if name.startswith("script_")],
+		)
 
 
 if __name__ == "__main__":
