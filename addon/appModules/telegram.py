@@ -930,10 +930,19 @@ def _pressCallButton(button: Any | None) -> bool:
 def answerCall() -> None:
 	"""Accept the call Telegram is ringing for."""
 	buttons = _telegramCallPanel()
-	# Telegram shares one button between answering and hanging up. It only
-	# answers while the decline button stands beside it, so without that
-	# neighbour this command must not press it and end an established call.
-	if buttons.declineCancel is None or not _pressCallButton(buttons.answerHangup):
+	# Telegram shares one button between answering and hanging up, and its
+	# Cancel button (a pending outgoing call, or a busy redial offer) sits in
+	# the same slot as Decline, so a neighbour alone does not prove there is a
+	# ringing call to answer. While a local outgoing call awaits confirmation,
+	# Telegram also replaces the camera with a cornerless "Start call" trigger
+	# and hides the microphone button - requiring the microphone too keeps
+	# this command from placing that pending call instead of reporting there
+	# is nothing to answer.
+	if (
+		buttons.declineCancel is None
+		or buttons.microphone is None
+		or not _pressCallButton(buttons.answerHangup)
+	):
 		ui.message(_("No incoming call"))
 
 

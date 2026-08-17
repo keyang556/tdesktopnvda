@@ -1130,6 +1130,51 @@ class TelegramAppModuleTests(unittest.TestCase):
 
 		self.assertEqual(panel.decline.actionCount, 1)
 
+	def test_answer_does_not_start_a_pending_outgoing_call(self):
+		# calls_panel.cpp Panel::updateHangupGeometry(), isWaitingUser branch:
+		# a local outgoing call awaiting confirmation replaces the camera with
+		# a cornerless "Start video" button in its slot, hides the microphone,
+		# and the shared button reads "Start call" - Screencast, Decline and
+		# Mute are all absent, leaving Start video - Cancel - Start call.
+		width = _CALL_BUTTON_WIDTH
+		left = 300
+		startVideo = _callButton("Start video", left - width)
+		cancel = _callButton("Cancel", left)
+		startCall = _callButton("Start call", left + width)
+		window = _FakeUIA(
+			className="class Calls::Panel",
+			children=[startVideo, cancel, startCall],
+		)
+		self.module._testApi.foregroundObject = window
+
+		self.module.answerCall()
+
+		self.assertEqual(startCall.actionCount, 0)
+		self.assertEqual(cancel.actionCount, 0)
+		self.assertEqual(startVideo.actionCount, 0)
+		self.assertEqual(self.module._testUi.messages, ["No incoming call"])
+
+	def test_end_call_still_cancels_a_pending_outgoing_call(self):
+		# Cancelling the not-yet-placed call is a reasonable "end call", even
+		# though Telegram's own label for this button is "Cancel".
+		width = _CALL_BUTTON_WIDTH
+		left = 300
+		startVideo = _callButton("Start video", left - width)
+		cancel = _callButton("Cancel", left)
+		startCall = _callButton("Start call", left + width)
+		window = _FakeUIA(
+			className="class Calls::Panel",
+			children=[startVideo, cancel, startCall],
+		)
+		self.module._testApi.foregroundObject = window
+
+		self.module.endCall()
+
+		self.assertEqual(cancel.actionCount, 1)
+		self.assertEqual(startVideo.actionCount, 0)
+		self.assertEqual(startCall.actionCount, 0)
+		self.assertEqual(self.module._testUi.messages, ["Cancel"])
+
 	def test_app_module_leaves_the_commands_to_the_global_plugin(self):
 		# Defining them here as well would put a second, identically described
 		# entry in NVDA's Input Gestures dialog, where only one of the two can
