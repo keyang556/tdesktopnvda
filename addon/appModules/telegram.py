@@ -687,8 +687,14 @@ def _callPanelButtons(root: object) -> _CallPanelButtons:
 	Telegram lays its call panel out as
 	``Screencast - Camera - Cancel/Decline - Answer/Hangup/Redial - Mute``,
 	with the add-people button after the microphone. Every one of them is a
-	``Ui::CallButton``, so the camera and the microphone are recognized by their
-	device-selection corner button and the rest by their place in that row.
+	``Ui::CallButton``, so the camera and the microphone are recognized by
+	their device-selection corner button and the rest by their place in that
+	row. Camera and the microphone always hide together, so anything but
+	exactly two corner buttons - or exactly zero, alongside the three plain
+	buttons that remain while a local outgoing call awaits confirmation (a
+	cornerless video trigger in the camera's slot, Cancel, and the shared
+	Answer/Hangup/Redial button) - is a shape this add-on does not recognize,
+	rather than a guess at one.
 	"""
 	plain: list[tuple[float, Any]] = []
 	withCorner: list[tuple[float, Any]] = []
@@ -699,18 +705,20 @@ def _callPanelButtons(root: object) -> _CallPanelButtons:
 		if left is None:
 			continue
 		(withCorner if _hasDeviceSelectionCorner(element) else plain).append((left, element))
-	if not plain:
-		return _CallPanelButtons()
 	plain.sort(key=lambda entry: entry[0])
 	withCorner.sort(key=lambda entry: entry[0])
 
-	microphoneLeft, microphone = withCorner[-1] if withCorner else (None, None)
-	# Telegram hides the camera and the microphone together, so a single corner
-	# button is the microphone rather than an ambiguous camera candidate.
-	cameraLeft, camera = withCorner[0] if len(withCorner) > 1 else (None, None)
+	if not withCorner:
+		if len(plain) != 3:
+			return _CallPanelButtons()
+		_videoTrigger, cancel, answerHangup = (element for _left, element in plain)
+		return _CallPanelButtons(answerHangup=answerHangup, declineCancel=cancel)
+	if len(withCorner) != 2:
+		return _CallPanelButtons()
+	(cameraLeft, camera), (microphoneLeft, microphone) = withCorner
 
 	answerHangupLeft, answerHangup = _lastButtonLeftOf(plain, microphoneLeft)
-	if cameraLeft is not None and answerHangupLeft is not None and answerHangupLeft <= cameraLeft:
+	if answerHangupLeft is not None and answerHangupLeft <= cameraLeft:
 		# Only screen sharing sits left of the camera; the shared answer button
 		# is missing rather than standing there.
 		answerHangupLeft, answerHangup = None, None
@@ -718,7 +726,7 @@ def _callPanelButtons(root: object) -> _CallPanelButtons:
 	declineLeft, declineCancel = (
 		_lastButtonLeftOf(plain, answerHangupLeft) if answerHangup is not None else (None, None)
 	)
-	if cameraLeft is not None and declineLeft is not None and declineLeft <= cameraLeft:
+	if declineLeft is not None and declineLeft <= cameraLeft:
 		declineCancel = None
 
 	return _CallPanelButtons(

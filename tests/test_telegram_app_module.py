@@ -1175,6 +1175,38 @@ class TelegramAppModuleTests(unittest.TestCase):
 		self.assertEqual(startCall.actionCount, 0)
 		self.assertEqual(self.module._testUi.messages, ["Cancel"])
 
+	def test_incomplete_pending_call_row_is_refused_rather_than_guessed(self):
+		# The real pending-outgoing-call row always keeps the shared
+		# Answer/Hangup/Redial button alongside Cancel (calls_panel.cpp never
+		# toggles it off), and the microphone is hidden by the exact same flag
+		# that shows the cornerless video trigger, so the two can never appear
+		# together. A row missing the shared button while carrying a
+		# microphone therefore does not match any real Telegram state, and
+		# must not be treated as though Cancel were the shared button and the
+		# video trigger were Cancel.
+		width = _CALL_BUTTON_WIDTH
+		left = 300
+		startVideo = _callButton("Start video", left - width)
+		cancel = _callButton("Cancel", left)
+		muteDevice = _callButton("Speaker", left + width + 40)
+		mute = _callButton("Mute", left + width, children=[muteDevice])
+		window = _FakeUIA(
+			className="class Calls::Panel",
+			children=[startVideo, cancel, mute],
+		)
+		self.module._testApi.foregroundObject = window
+
+		self.module.answerCall()
+		self.module.endCall()
+
+		self.assertEqual(cancel.actionCount, 0)
+		self.assertEqual(startVideo.actionCount, 0)
+		self.assertEqual(mute.actionCount, 0)
+		self.assertEqual(
+			self.module._testUi.messages,
+			["No incoming call", "Not in a call"],
+		)
+
 	def test_app_module_leaves_the_commands_to_the_global_plugin(self):
 		# Defining them here as well would put a second, identically described
 		# entry in NVDA's Input Gestures dialog, where only one of the two can
