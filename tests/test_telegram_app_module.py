@@ -10,6 +10,7 @@ import unittest
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "addon" / "appModules" / "telegram.py"
 
+_BOUNDING_RECTANGLE = "boundingRectangle"
 _CLASS_NAME = "className"
 _AUTOMATION_ID = "automationId"
 _CONTROL_TYPE = "controlType"
@@ -110,6 +111,20 @@ class _FakeInvokePattern:
 		self._element.actionCount += 1
 
 
+class _FakeElementArray:
+	"""Behave like the IUIAutomationElementArray a FindAll query returns."""
+
+	def __init__(self, elements):
+		self._elements = list(elements)
+
+	@property
+	def Length(self):
+		return len(self._elements)
+
+	def GetElement(self, index):
+		return self._elements[index]
+
+
 class _FakeUIA:
 	def __init__(
 		self,
@@ -122,6 +137,7 @@ class _FakeUIA:
 		states=None,
 		children=None,
 		isOffscreen=False,
+		rectangle=None,
 		failQuery=False,
 		failAction=False,
 		failFocus=False,
@@ -137,6 +153,7 @@ class _FakeUIA:
 		for child in self.children:
 			child.parent = self
 		self.isOffscreen = isOffscreen
+		self.rectangle = rectangle
 		self.failQuery = failQuery
 		self.failAction = failAction
 		self.failFocus = failFocus
@@ -161,6 +178,7 @@ class _FakeUIA:
 			_Role.LISTITEM: _LIST_ITEM_CONTROL,
 		}
 		values = {
+			_BOUNDING_RECTANGLE: self.rectangle,
 			_CLASS_NAME: self.UIAClassName,
 			_AUTOMATION_ID: self.UIAAutomationId,
 			_CONTROL_TYPE: controlTypes.get(self.role),
@@ -200,6 +218,19 @@ class _FakeUIA:
 		else:
 			raise AssertionError(f"unexpected tree scope: {scope}")
 		return next((node for node in nodes if condition.matches(node)), None)
+
+	def FindAll(self, scope, condition):
+		if self.failQuery:
+			raise RuntimeError("provider query failed")
+		if scope == _TREE_SCOPE_CHILDREN:
+			nodes = iter(self.children)
+		elif scope == _TREE_SCOPE_DESCENDANTS:
+			nodes = self._descendants()
+		elif scope == _TREE_SCOPE_SUBTREE:
+			nodes = iter((self, *self._descendants()))
+		else:
+			raise AssertionError(f"unexpected tree scope: {scope}")
+		return _FakeElementArray([node for node in nodes if condition.matches(node)])
 
 	def GetCurrentPropertyValue(self, propertyId):
 		return self.propertyValue(propertyId)
@@ -251,6 +282,7 @@ def _loadTelegramModule(*, injectTranslation=True):
 	ui.message = ui.messages.append
 
 	uiaHandler = types.ModuleType("UIAHandler")
+	uiaHandler.UIA_BoundingRectanglePropertyId = _BOUNDING_RECTANGLE
 	uiaHandler.UIA_ClassNamePropertyId = _CLASS_NAME
 	uiaHandler.UIA_AutomationIdPropertyId = _AUTOMATION_ID
 	uiaHandler.UIA_ControlTypePropertyId = _CONTROL_TYPE
@@ -307,6 +339,64 @@ def _loadTelegramModule(*, injectTranslation=True):
 				sys.modules.pop(name, None)
 			else:
 				sys.modules[name] = value
+
+
+_CALL_BUTTON_WIDTH = 68
+_CALL_BUTTON_TOP = 480
+
+
+def _callButton(name, left, *, offscreen=False, children=()):
+	return _FakeUIA(
+		role=_Role.BUTTON,
+		name=name,
+		className="class Ui::CallButton",
+		automationId="class Calls::Panel.class Ui::CallButton",
+		rectangle=(float(left), float(_CALL_BUTTON_TOP), float(_CALL_BUTTON_WIDTH), 68.0),
+		isOffscreen=offscreen,
+		children=list(children),
+	)
+
+
+def _callPanel(*, incoming):
+	"""Build Telegram's call panel button row as calls_panel.cpp lays it out.
+
+	The row reads Screencast - Camera - Cancel/Decline - Answer/Hangup/Redial -
+	Mute - Add people, every button is a ``Ui::CallButton``, and only the camera
+	and the microphone carry a device-selection corner button.
+	"""
+	width = _CALL_BUTTON_WIDTH
+	cancelLeft = 300
+	cameraLeft = cancelLeft - width
+	# Telegram keeps the shared answer button beside the decline button while a
+	# call rings, and slides it over the hidden one once the call is running.
+	answerLeft = cancelLeft + (width if incoming else 0)
+	microphoneLeft = answerLeft + width
+	cameraDevice = _callButton("Camera", cameraLeft + 40)
+	audioDevice = _callButton("Speaker", microphoneLeft + 40)
+	panel = types.SimpleNamespace(
+		screencast=_callButton("Screen sharing", cameraLeft - width, offscreen=incoming),
+		camera=_callButton("Start video", cameraLeft, children=[cameraDevice]),
+		decline=_callButton("Decline", cancelLeft, offscreen=not incoming),
+		cancel=_callButton("Cancel", cancelLeft, offscreen=True),
+		answer=_callButton("Accept" if incoming else "End call", answerLeft),
+		microphone=_callButton("Mute", microphoneLeft, children=[audioDevice]),
+		addPeople=_callButton("Add people", microphoneLeft + width),
+		cameraDevice=cameraDevice,
+		audioDevice=audioDevice,
+	)
+	panel.window = _FakeUIA(
+		className="class Calls::Panel",
+		children=[
+			panel.answer,
+			panel.decline,
+			panel.cancel,
+			panel.screencast,
+			panel.camera,
+			panel.microphone,
+			panel.addPeople,
+		],
+	)
+	return panel
 
 
 class TelegramAppModuleTests(unittest.TestCase):
@@ -935,6 +1025,110 @@ class TelegramAppModuleTests(unittest.TestCase):
 		self.module.focusChatList()
 
 		self.assertTrue(chat.focused)
+
+	def test_call_panel_names_the_action_it_performs(self):
+		panel = _callPanel(incoming=True)
+		self.module._testApi.foregroundObject = panel.window
+
+		self.module.answerCall()
+
+		self.assertEqual(panel.answer.actionCount, 1)
+		self.assertEqual(self.module._testUi.messages, ["Accept"])
+
+	def test_incoming_call_is_declined_rather_than_answered(self):
+		panel = _callPanel(incoming=True)
+		self.module._testApi.foregroundObject = panel.window
+
+		self.module.endCall()
+
+		self.assertEqual(panel.decline.actionCount, 1)
+		self.assertEqual(panel.answer.actionCount, 0)
+		self.assertEqual(self.module._testUi.messages, ["Decline"])
+
+	def test_established_call_is_ended_by_the_shared_button(self):
+		panel = _callPanel(incoming=False)
+		self.module._testApi.foregroundObject = panel.window
+
+		self.module.endCall()
+
+		self.assertEqual(panel.answer.actionCount, 1)
+		self.assertEqual(self.module._testUi.messages, ["End call"])
+
+	def test_answer_never_hangs_up_an_established_call(self):
+		panel = _callPanel(incoming=False)
+		self.module._testApi.foregroundObject = panel.window
+
+		self.module.answerCall()
+
+		self.assertEqual(panel.answer.actionCount, 0)
+		self.assertEqual(self.module._testUi.messages, ["No incoming call"])
+
+	def test_microphone_and_camera_are_told_apart_by_their_corner_button(self):
+		panel = _callPanel(incoming=False)
+		self.module._testApi.foregroundObject = panel.window
+
+		self.module.toggleCallMicrophone()
+		self.module.toggleCallCamera()
+
+		self.assertEqual(panel.microphone.actionCount, 1)
+		self.assertEqual(panel.camera.actionCount, 1)
+		self.assertEqual(panel.screencast.actionCount, 0)
+		self.assertEqual(panel.addPeople.actionCount, 0)
+		self.assertEqual(self.module._testUi.messages, ["Mute", "Start video"])
+
+	def test_device_selection_corner_buttons_are_never_pressed(self):
+		panel = _callPanel(incoming=False)
+		self.module._testApi.foregroundObject = panel.window
+
+		self.module.toggleCallMicrophone()
+
+		self.assertEqual(panel.audioDevice.actionCount, 0)
+		self.assertEqual(panel.cameraDevice.actionCount, 0)
+
+	def test_call_commands_reach_a_call_window_behind_the_foreground(self):
+		panel = _callPanel(incoming=True)
+		appModule = types.SimpleNamespace(appName="telegram")
+		panel.window.appModule = appModule
+		mainWindow = _FakeUIA(className="class MainWindow")
+		mainWindow.appModule = appModule
+		self.module._testApi.foregroundObject = mainWindow
+		self.module._testApi.desktopObject.children = [panel.window]
+
+		self.module.answerCall()
+
+		self.assertEqual(panel.answer.actionCount, 1)
+
+	def test_call_commands_report_when_no_call_is_running(self):
+		self.module._testApi.foregroundObject = _FakeUIA()
+
+		self.module.endCall()
+		self.module.toggleCallMicrophone()
+		self.module.toggleCallCamera()
+
+		self.assertEqual(
+			self.module._testUi.messages,
+			["Not in a call", "Not in a call", "Not in a call"],
+		)
+
+	def test_call_command_contains_provider_action_failure(self):
+		panel = _callPanel(incoming=False)
+		panel.microphone.failAction = True
+		self.module._testApi.foregroundObject = panel.window
+
+		self.module.toggleCallMicrophone()
+
+		self.assertEqual(self.module._testUi.messages, ["Not in a call"])
+
+	def test_offscreen_call_buttons_do_not_shift_the_button_row(self):
+		panel = _callPanel(incoming=True)
+		# Telegram keeps the hidden screen-sharing and cancel buttons in its
+		# tree while an incoming call rings.
+		self.assertTrue(panel.screencast.isOffscreen)
+		self.module._testApi.foregroundObject = panel.window
+
+		self.module.endCall()
+
+		self.assertEqual(panel.decline.actionCount, 1)
 
 	def test_app_module_leaves_the_commands_to_the_global_plugin(self):
 		# Defining them here as well would put a second, identically described

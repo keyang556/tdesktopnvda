@@ -120,3 +120,47 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			_passGestureToApplication(gesture)
 			return
 		_telegramModule.openMainMenu()
+
+	@script(
+		# Translators: The description of a command to accept an incoming Telegram call.
+		description=_("Answer the incoming call"),
+		gesture="kb:alt+y",
+	)
+	def script_answerCall(self, gesture: "inputCore.InputGesture") -> None:
+		if not _telegramIsInForeground():
+			_passGestureToApplication(gesture)
+			return
+		_telegramModule.answerCall()
+
+	@script(
+		# Translators: The description of a command to hang up a Telegram call.
+		description=_("Decline the incoming call, or end the call in progress"),
+		gesture="kb:alt+n",
+	)
+	def script_endCall(self, gesture: "inputCore.InputGesture") -> None:
+		if not _telegramIsInForeground():
+			_passGestureToApplication(gesture)
+			return
+		_telegramModule.endCall()
+
+	@script(
+		# Translators: The description of a command to toggle the microphone in a Telegram call.
+		description=_("Mute or unmute the microphone during a call"),
+		gesture="kb:alt+a",
+	)
+	def script_toggleCallMicrophone(self, gesture: "inputCore.InputGesture") -> None:
+		if not _telegramIsInForeground():
+			_passGestureToApplication(gesture)
+			return
+		_telegramModule.toggleCallMicrophone()
+
+	@script(
+		# Translators: The description of a command to toggle the camera in a Telegram call.
+		description=_("Turn the camera on or off during a call"),
+		gesture="kb:alt+v",
+	)
+	def script_toggleCallCamera(self, gesture: "inputCore.InputGesture") -> None:
+		if not _telegramIsInForeground():
+			_passGestureToApplication(gesture)
+			return
+		_telegramModule.toggleCallCamera()
