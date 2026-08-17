@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 import addonHandler
 import api
@@ -29,6 +29,7 @@ if "_" not in globals():
 	_ = addonHandler.getCodeAddon().getTranslationsInstance().gettext
 
 
+_CALL_BUTTON_CLASS_NAME = "Ui::CallButton"
 _CHAT_LIST_CLASS_NAME = "Dialogs::InnerWidget"
 _DIALOGS_WIDGET_CLASS_NAME = "Dialogs::Widget"
 _ICON_BUTTON_CLASS_NAME = "Ui::IconButton"
@@ -326,6 +327,28 @@ def _findFirstElement(
 		return None
 
 
+def _findAllElements(element: Any, scope: int, conditions: list[Any]) -> tuple[Any, ...]:
+	"""Collect every match of one provider-side UIA query, as live elements."""
+	try:
+		client: Any = _uiaHandler().clientObject
+		condition = conditions[0] if len(conditions) == 1 else client.CreateAndConditionFromArray(conditions)
+		found = _usableElement(element.FindAll(scope, condition))
+		if found is None:
+			return ()
+		length = found.Length
+	except Exception:
+		return ()
+	elements: list[Any] = []
+	for index in range(length):
+		try:
+			match = _usableElement(found.GetElement(index))
+		except Exception:
+			continue
+		if match is not None:
+			elements.append(match)
+	return tuple(elements)
+
+
 def _findTelegramChatList(root: object) -> Any | None:
 	element = _uiaElement(root)
 	if element is None:
@@ -570,6 +593,150 @@ def _findTelegramMainMenuButtonFromPoints(root: object) -> Any | None:
 	return None
 
 
+class _CallPanelButtons(NamedTuple):
+	"""Telegram's call controls, resolved from the panel's own button row."""
+
+	answerHangup: Any | None = None
+	declineCancel: Any | None = None
+	microphone: Any | None = None
+	camera: Any | None = None
+
+
+def _visibleCallButtons(root: object) -> tuple[Any, ...]:
+	"""Return the on-screen ``Ui::CallButton`` controls of one Telegram window."""
+	element = _uiaElement(root)
+	if element is None:
+		return ()
+	try:
+		client: Any = _uiaHandler().clientObject
+		conditions = [
+			_rttiClassCondition(client, _CALL_BUTTON_CLASS_NAME),
+			_propertyCondition(
+				client,
+				UIAHandler.UIA_ControlTypePropertyId,
+				UIAHandler.UIA_ButtonControlTypeId,
+			),
+			_propertyCondition(client, UIAHandler.UIA_IsOffscreenPropertyId, False),
+		]
+	except Exception:
+		return ()
+	return _findAllElements(element, UIAHandler.TreeScope_Subtree, conditions)
+
+
+def _isDeviceSelectionCorner(element: Any) -> bool:
+	"""Return whether this button is the small corner button of another one."""
+	walker = _rawViewWalker()
+	if walker is None:
+		return False
+	try:
+		parent = _usableElement(walker.GetParentElement(element))
+	except Exception:
+		return False
+	return parent is not None and _rawNormalizedClassName(parent) == _CALL_BUTTON_CLASS_NAME
+
+
+def _hasDeviceSelectionCorner(element: Any) -> bool:
+	"""Return whether this button carries a device-selection corner button.
+
+	Telegram gives exactly two of the call panel's buttons such a corner button:
+	the camera and the microphone. It is the only difference between them and
+	their neighbours that does not depend on Telegram's display language.
+	"""
+	try:
+		client: Any = _uiaHandler().clientObject
+		condition = _rttiClassCondition(client, _CALL_BUTTON_CLASS_NAME)
+	except Exception:
+		return False
+	return (
+		_findFirstElement(
+			element,
+			UIAHandler.TreeScope_Children,
+			[condition],
+			useCache=False,
+		)
+		is not None
+	)
+
+
+def _elementLeft(element: Any) -> float | None:
+	"""Return a UIA element's screen x position, skipping empty rectangles."""
+	rectangle = _rawElementProperty(element, UIAHandler.UIA_BoundingRectanglePropertyId)
+	try:
+		left, _top, width, _height = rectangle  # type: ignore[misc]
+	except Exception:
+		return None
+	if not isinstance(left, (int, float)) or not isinstance(width, (int, float)) or width <= 0:
+		return None
+	return float(left)
+
+
+def _lastButtonLeftOf(
+	buttons: list[tuple[float, Any]],
+	limit: float | None,
+) -> tuple[float | None, Any | None]:
+	"""Return the rightmost button of an x-sorted row that starts before ``limit``."""
+	for left, element in reversed(buttons):
+		if limit is None or left < limit:
+			return left, element
+	return None, None
+
+
+def _callPanelButtons(root: object) -> _CallPanelButtons:
+	"""Identify Telegram's call controls without reading a translated name.
+
+	Telegram lays its call panel out as
+	``Screencast - Camera - Cancel/Decline - Answer/Hangup/Redial - Mute``,
+	with the add-people button after the microphone. Every one of them is a
+	``Ui::CallButton``, so the camera and the microphone are recognized by
+	their device-selection corner button and the rest by their place in that
+	row. Camera and the microphone always hide together, so anything but
+	exactly two corner buttons - or exactly zero, alongside the three plain
+	buttons that remain while a local outgoing call awaits confirmation (a
+	cornerless video trigger in the camera's slot, Cancel, and the shared
+	Answer/Hangup/Redial button) - is a shape this add-on does not recognize,
+	rather than a guess at one.
+	"""
+	plain: list[tuple[float, Any]] = []
+	withCorner: list[tuple[float, Any]] = []
+	for element in _visibleCallButtons(root):
+		if _isDeviceSelectionCorner(element):
+			continue
+		left = _elementLeft(element)
+		if left is None:
+			continue
+		(withCorner if _hasDeviceSelectionCorner(element) else plain).append((left, element))
+	plain.sort(key=lambda entry: entry[0])
+	withCorner.sort(key=lambda entry: entry[0])
+
+	if not withCorner:
+		if len(plain) != 3:
+			return _CallPanelButtons()
+		_videoTrigger, cancel, answerHangup = (element for _left, element in plain)
+		return _CallPanelButtons(answerHangup=answerHangup, declineCancel=cancel)
+	if len(withCorner) != 2:
+		return _CallPanelButtons()
+	(cameraLeft, camera), (microphoneLeft, microphone) = withCorner
+
+	answerHangupLeft, answerHangup = _lastButtonLeftOf(plain, microphoneLeft)
+	if answerHangupLeft is not None and answerHangupLeft <= cameraLeft:
+		# Only screen sharing sits left of the camera; the shared answer button
+		# is missing rather than standing there.
+		answerHangupLeft, answerHangup = None, None
+
+	declineLeft, declineCancel = (
+		_lastButtonLeftOf(plain, answerHangupLeft) if answerHangup is not None else (None, None)
+	)
+	if declineLeft is not None and declineLeft <= cameraLeft:
+		declineCancel = None
+
+	return _CallPanelButtons(
+		answerHangup=answerHangup,
+		declineCancel=declineCancel,
+		microphone=microphone,
+		camera=camera,
+	)
+
+
 def _sameUIAElement(left: Any, right: Any) -> bool:
 	if left is None or right is None:
 		return False
@@ -650,6 +817,32 @@ def _telegramMainWindow() -> object | None:
 	return root
 
 
+def _telegramWindows() -> tuple[object, ...]:
+	"""Return Telegram's top-level windows, the foreground one first.
+
+	A Telegram call runs in a window of its own, which the user can leave
+	without ending the call, so the call commands cannot search only the window
+	that happens to be in front.
+	"""
+	root = _foregroundObject()
+	if root is None:
+		return ()
+	appName = _appName(root)
+	if not appName:
+		# Do not search unrelated desktop windows when the foreground object
+		# cannot establish which application owns it.
+		return (root,)
+	windows = [root]
+	try:
+		children = api.getDesktopObject().children
+	except Exception:
+		return tuple(windows)
+	for child in children or ():
+		if child is not root and _appName(child) == appName:
+			windows.append(child)
+	return tuple(windows)
+
+
 def _focusObject() -> object | None:
 	try:
 		return api.getFocusObject()
@@ -714,3 +907,70 @@ def openMainMenu() -> None:
 	if fallbackButton is not None and _invokeElement(fallbackButton):
 		return
 	ui.message(_("Main menu is not available"))
+
+
+def _telegramCallPanel() -> _CallPanelButtons:
+	"""Return the call controls of whichever Telegram window is showing a call."""
+	for window in _telegramWindows():
+		buttons = _callPanelButtons(window)
+		if buttons.answerHangup is not None or buttons.microphone is not None:
+			return buttons
+	return _CallPanelButtons()
+
+
+def _pressCallButton(button: Any | None) -> bool:
+	"""Press a call control, reporting the action in Telegram's own wording.
+
+	Each of these buttons is named after what pressing it does, so the name is
+	read before the button is pressed. Reading it afterwards would race
+	Telegram's own update of that name.
+	"""
+	if button is None:
+		return False
+	name = _elementName(button)
+	if not _invokeElement(button):
+		return False
+	if name:
+		ui.message(name)
+	return True
+
+
+def answerCall() -> None:
+	"""Accept the call Telegram is ringing for."""
+	buttons = _telegramCallPanel()
+	# Telegram shares one button between answering and hanging up, and its
+	# Cancel button (a pending outgoing call, or a busy redial offer) sits in
+	# the same slot as Decline, so a neighbour alone does not prove there is a
+	# ringing call to answer. While a local outgoing call awaits confirmation,
+	# Telegram also replaces the camera with a cornerless "Start call" trigger
+	# and hides the microphone button - requiring the microphone too keeps
+	# this command from placing that pending call instead of reporting there
+	# is nothing to answer.
+	if (
+		buttons.declineCancel is None
+		or buttons.microphone is None
+		or not _pressCallButton(buttons.answerHangup)
+	):
+		ui.message(_("No incoming call"))
+
+
+def endCall() -> None:
+	"""Decline the incoming Telegram call, or end the call in progress."""
+	buttons = _telegramCallPanel()
+	# While a call rings, the shared button answers it, so the separate decline
+	# button is the one that hangs up.
+	target = buttons.declineCancel if buttons.declineCancel is not None else buttons.answerHangup
+	if not _pressCallButton(target):
+		ui.message(_("Not in a call"))
+
+
+def toggleCallMicrophone() -> None:
+	"""Mute or unmute the microphone in Telegram's call."""
+	if not _pressCallButton(_telegramCallPanel().microphone):
+		ui.message(_("Not in a call"))
+
+
+def toggleCallCamera() -> None:
+	"""Turn the camera on or off in Telegram's call."""
+	if not _pressCallButton(_telegramCallPanel().camera):
+		ui.message(_("Not in a call"))

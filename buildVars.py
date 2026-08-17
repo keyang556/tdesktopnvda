@@ -10,11 +10,11 @@ addon_info = AddonInfo(
 	addon_description=_(
 		"""Improves Telegram Desktop accessibility for NVDA users.
 
-Adds Alt+1 to move focus to the chat list and Alt+M to open Telegram's main menu. The add-on uses Telegram's stable UIA class information and leaves Telegram's native accessible names unchanged."""
+Adds Alt+1 to move focus to the chat list, Alt+M to open Telegram's main menu, and Alt+Y, Alt+N, Alt+A and Alt+V to answer a call, hang up, mute the microphone and turn the camera on or off. The add-on uses Telegram's stable UIA class information and leaves Telegram's native accessible names unchanged."""
 	),
-	addon_version="0.1.3",
+	addon_version="0.1.4",
 	addon_changelog=_(
-		"""Fixed Alt+M in Telegram's folder-sidebar layout and fixed an NVDA freeze by replacing recursive object-tree traversal with provider-side UIA queries."""
+		"""Added call commands that match UnigramPlus: Alt+Y answers an incoming call, Alt+N declines it or ends the call in progress, Alt+A mutes or unmutes the microphone, and Alt+V turns the camera on or off. Each command reports the action in Telegram's own wording. Updated all translations and manuals for version 0.1.4."""
 	),
 	addon_author="Ken Chang <lindsay714322@gmail.com>",
 	addon_url=None,

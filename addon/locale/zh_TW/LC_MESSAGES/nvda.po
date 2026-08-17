@@ -1,9 +1,9 @@
 msgid ""
 msgstr ""
-"Project-Id-Version: telegramDesktop 0.1.3\n"
+"Project-Id-Version: telegramDesktop 0.1.4\n"
 "Report-Msgid-Bugs-To: nvda-translations@groups.io\n"
-"POT-Creation-Date: 2026-07-16 00:00+0800\n"
-"PO-Revision-Date: 2026-07-16 00:00+0800\n"
+"POT-Creation-Date: 2026-08-17 00:00+0800\n"
+"PO-Revision-Date: 2026-08-17 00:00+0800\n"
 "Last-Translator: Ken Chang <lindsay714322@gmail.com>\n"
 "Language-Team: Traditional Chinese\n"
 "Language: zh_TW\n"
@@ -18,14 +18,14 @@ msgstr "Telegram 電腦版無障礙支援"
 msgid ""
 "Improves Telegram Desktop accessibility for NVDA users.\n"
 "\n"
-"Adds Alt+1 to move focus to the chat list and Alt+M to open Telegram's main menu. The add-on uses Telegram's stable UIA class information and leaves Telegram's native accessible names unchanged."
+"Adds Alt+1 to move focus to the chat list, Alt+M to open Telegram's main menu, and Alt+Y, Alt+N, Alt+A and Alt+V to answer a call, hang up, mute the microphone and turn the camera on or off. The add-on uses Telegram's stable UIA class information and leaves Telegram's native accessible names unchanged."
 msgstr ""
 "改善 Telegram 電腦版與 NVDA 搭配使用時的無障礙體驗。\n"
 "\n"
-"新增 Alt+1 將焦點移至聊天室清單，以及 Alt+M 開啟 Telegram 主選單。附加元件使用 Telegram 穩定的 UIA 類別資訊，並保留 Telegram 原有的無障礙名稱。"
+"新增 Alt+1 將焦點移至聊天室清單、Alt+M 開啟 Telegram 主選單，以及 Alt+Y、Alt+N、Alt+A 與 Alt+V 用來接聽通話、掛斷、開關麥克風與開關攝影機。附加元件使用 Telegram 穩定的 UIA 類別資訊，並保留 Telegram 原有的無障礙名稱。"
 
-msgid "Fixed Alt+M in Telegram's folder-sidebar layout and fixed an NVDA freeze by replacing recursive object-tree traversal with provider-side UIA queries."
-msgstr "修正 Telegram 資料夾側欄版面中的 Alt+M，並以 UIA 提供者端查詢取代遞迴物件樹走訪，避免 NVDA 凍結。"
+msgid "Added call commands that match UnigramPlus: Alt+Y answers an incoming call, Alt+N declines it or ends the call in progress, Alt+A mutes or unmutes the microphone, and Alt+V turns the camera on or off. Each command reports the action in Telegram's own wording. Updated all translations and manuals for version 0.1.4."
+msgstr "新增與 UnigramPlus 相同的通話指令：Alt+Y 接聽來電、Alt+N 拒接來電或掛斷進行中的通話、Alt+A 開啟或關閉麥克風、Alt+V 開啟或關閉攝影機。每個指令都會以 Telegram 本身的用語報出所執行的動作。所有翻譯與說明文件已更新至 0.1.4 版。"
 
 msgid "Move focus to chat list"
 msgstr "將焦點移至聊天室清單"
@@ -41,6 +41,24 @@ msgstr "開啟主選單"
 
 msgid "Main menu is not available"
 msgstr "主選單無法使用"
+
+msgid "Answer the incoming call"
+msgstr "接聽來電"
+
+msgid "Decline the incoming call, or end the call in progress"
+msgstr "拒接來電，或掛斷進行中的通話"
+
+msgid "Mute or unmute the microphone during a call"
+msgstr "通話中開啟或關閉麥克風"
+
+msgid "Turn the camera on or off during a call"
+msgstr "通話中開啟或關閉攝影機"
+
+msgid "No incoming call"
+msgstr "沒有來電"
+
+msgid "Not in a call"
+msgstr "目前未在通話中"
 
 msgid "Main menu"
 msgstr "主選單"
