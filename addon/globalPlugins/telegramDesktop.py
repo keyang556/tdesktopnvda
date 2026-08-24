@@ -17,8 +17,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import importlib
+import ntpath
 from types import ModuleType
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, override
 
 import addonHandler
 import api
@@ -34,6 +35,9 @@ if TYPE_CHECKING:
 addonHandler.initTranslation()
 
 _TELEGRAM_APP_NAME = "telegram"
+_TELEGRAM_PRODUCT_NAME = "telegram desktop"
+_TELEGRAM_EXECUTABLE_NAME = "telegram.exe"
+_UNIGRAM_IDENTIFIER = "unigram"
 
 _codeAddon: addonHandler.Addon = addonHandler.getCodeAddon()
 
@@ -46,11 +50,39 @@ _telegramModule = importlib.reload(_telegramModule)
 ADDON_SUMMARY: str = cast(str, _codeAddon.manifest["summary"])
 
 
-def _isTelegramObject(obj: object) -> bool:
+def _normalizedAppModuleAttribute(appModule: object, name: str) -> str:
+	"""Return a case-insensitive app-module attribute, or an empty value."""
 	try:
-		return obj.appModule.appName.casefold() == _TELEGRAM_APP_NAME
+		return str(getattr(appModule, name, "") or "").casefold()
+	except Exception:
+		return ""
+
+
+def _isTelegramObject(obj: object) -> bool:
+	"""Return whether *obj* belongs to the official Telegram Desktop process.
+
+	Unigram also registers as ``telegram`` with NVDA.  Do not let that shared
+	app name alone grant this global plug-in ownership of its gestures or UIA
+	objects: Telegram Desktop's PE metadata identifies the product and its
+	executable independently, without traversing the UIA tree.
+	"""
+	try:
+		appModule = obj.appModule
 	except Exception:
 		return False
+
+	if _normalizedAppModuleAttribute(appModule, "appName") != _TELEGRAM_APP_NAME:
+		return False
+
+	productName = _normalizedAppModuleAttribute(appModule, "productName")
+	appPath = _normalizedAppModuleAttribute(appModule, "appPath")
+	if _UNIGRAM_IDENTIFIER in productName or _UNIGRAM_IDENTIFIER in appPath:
+		return False
+
+	return (
+		productName == _TELEGRAM_PRODUCT_NAME
+		and ntpath.basename(appPath) == _TELEGRAM_EXECUTABLE_NAME
+	)
 
 
 def _foregroundObject() -> object | None:
@@ -83,6 +115,20 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	"""Own this add-on's commands so NVDA can reassign them at any time."""
 
 	scriptCategory = ADDON_SUMMARY
+
+	@override
+	def getScript(self, gesture: "inputCore.InputGesture") -> object | None:
+		"""Only claim built-in gestures while Telegram Desktop is foreground.
+
+		Calling ``gesture.send()`` after this plug-in has won lookup only forwards
+		the key to Windows; it does not restart NVDA's script lookup for an app
+		module such as UnigramPlus.  Returning ``None`` here lets NVDA continue to
+		that app module naturally.  The checks inside each command remain needed
+		for user gesture-map assignments, which NVDA resolves before this method.
+		"""
+		if not _telegramIsInForeground():
+			return None
+		return super().getScript(gesture)
 
 	def _cleanControlName(self, obj: object) -> None:
 		if _isTelegramObject(obj):

@@ -13,12 +13,22 @@ ADDON_SUMMARY = "Telegram Desktop Accessibility"
 
 
 class _FakeGlobalPlugin:
-	pass
+	def getScript(self, gesture):
+		return self._fallbackScript
 
 
 class _FakeObject:
-	def __init__(self, appName="telegram"):
-		self.appModule = types.SimpleNamespace(appName=appName)
+	def __init__(
+		self,
+		appName="telegram",
+		productName="Telegram Desktop",
+		appPath=r"C:\Program Files\Telegram Desktop\Telegram.exe",
+	):
+		self.appModule = types.SimpleNamespace(
+			appName=appName,
+			productName=productName,
+			appPath=appPath,
+		)
 		self.name = ""
 
 
@@ -176,7 +186,7 @@ class TelegramGlobalPluginTests(unittest.TestCase):
 			["focus", "menu", "answer", "end", "microphone", "camera"],
 		)
 
-	def test_commands_do_nothing_outside_telegram(self):
+	def test_commands_pass_through_outside_telegram(self):
 		self.module._testApi.foregroundObject = _FakeObject("notepad")
 		plugin = self.module.GlobalPlugin()
 		gestures = [_FakeGesture() for _index in range(6)]
@@ -190,6 +200,38 @@ class TelegramGlobalPluginTests(unittest.TestCase):
 
 		self.assertEqual(self.module._testTelegramModule.calls, [])
 		self.assertEqual([gesture.sent for gesture in gestures], [1] * len(gestures))
+
+	def test_unigram_is_not_treated_as_telegram_desktop_and_shortcuts_pass_through(self):
+		self.module._testApi.foregroundObject = _FakeObject(
+			productName="38833FF26BA1D.UnigramPreview",
+			appPath=r"C:\Program Files\WindowsApps\38833FF26BA1D.UnigramPreview\Unigram.exe",
+		)
+		plugin = self.module.GlobalPlugin()
+		gestures = [_FakeGesture() for _index in range(6)]
+
+		plugin.script_focusChatList(gestures[0])
+		plugin.script_openMainMenu(gestures[1])
+		plugin.script_answerCall(gestures[2])
+		plugin.script_endCall(gestures[3])
+		plugin.script_toggleCallMicrophone(gestures[4])
+		plugin.script_toggleCallCamera(gestures[5])
+
+		self.assertFalse(self.module._telegramIsInForeground())
+		self.assertEqual(self.module._testTelegramModule.calls, [])
+		self.assertEqual([gesture.sent for gesture in gestures], [1] * len(gestures))
+
+	def test_unknown_telegram_app_name_collision_fails_closed(self):
+		obj = _FakeObject(
+			productName="Some Other Application",
+			appPath=r"C:\OtherApp\telegram.exe",
+		)
+
+		self.assertFalse(self.module._isTelegramObject(obj))
+
+	def test_missing_telegram_metadata_fails_closed(self):
+		obj = _FakeObject(productName="", appPath="")
+
+		self.assertFalse(self.module._isTelegramObject(obj))
 
 	def test_gesture_reaches_the_application_outside_telegram(self):
 		self.module._testApi.foregroundObject = _FakeObject("notepad")
@@ -205,6 +247,22 @@ class TelegramGlobalPluginTests(unittest.TestCase):
 		self.module.GlobalPlugin().script_focusChatList(gesture)
 
 		self.assertEqual(gesture.sent, 0)
+
+	def test_plugin_does_not_claim_its_default_gestures_in_unigram(self):
+		self.module._testApi.foregroundObject = _FakeObject(
+			productName="38833FF26BA1D.UnigramPreview",
+			appPath=r"C:\Program Files\WindowsApps\38833FF26BA1D.UnigramPreview\Telegram.exe",
+		)
+		plugin = self.module.GlobalPlugin()
+		plugin._fallbackScript = object()
+
+		self.assertIsNone(plugin.getScript(_FakeGesture()))
+
+	def test_plugin_claims_its_default_gestures_in_telegram_desktop(self):
+		plugin = self.module.GlobalPlugin()
+		plugin._fallbackScript = object()
+
+		self.assertIs(plugin.getScript(_FakeGesture()), plugin._fallbackScript)
 
 	def test_unsendable_gesture_does_not_break_the_command(self):
 		self.module._testApi.foregroundObject = _FakeObject("notepad")
@@ -233,6 +291,16 @@ class TelegramGlobalPluginTests(unittest.TestCase):
 
 	def test_non_telegram_object_is_never_renamed(self):
 		obj = _FakeObject("notepad")
+
+		self.module.GlobalPlugin().event_focusEntered(obj, lambda: None)
+
+		self.assertEqual(obj.name, "")
+
+	def test_unigram_object_is_never_renamed(self):
+		obj = _FakeObject(
+			productName="38833FF26BA1D.UnigramPreview",
+			appPath=r"C:\Program Files\WindowsApps\38833FF26BA1D.UnigramPreview\Unigram.exe",
+		)
 
 		self.module.GlobalPlugin().event_focusEntered(obj, lambda: None)
 
