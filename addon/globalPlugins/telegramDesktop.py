@@ -19,7 +19,7 @@ from collections.abc import Callable
 import importlib
 import ntpath
 from types import ModuleType
-from typing import TYPE_CHECKING, cast, override
+from typing import TYPE_CHECKING, cast
 
 import addonHandler
 import api
@@ -116,7 +116,6 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 	scriptCategory = ADDON_SUMMARY
 
-	@override
 	def getScript(self, gesture: "inputCore.InputGesture") -> object | None:
 		"""Only claim built-in gestures while Telegram Desktop is foreground.
 
