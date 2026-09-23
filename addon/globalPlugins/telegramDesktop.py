@@ -209,3 +209,14 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			_passGestureToApplication(gesture)
 			return
 		_telegramModule.toggleCallCamera()
+
+	@script(
+		# Translators: The description of a command to open the links in the focused Telegram message.
+		description=_("Show links in the current message"),
+		gesture="kb:control+enter",
+	)
+	def script_showMessageLinks(self, gesture: "inputCore.InputGesture") -> None:
+		# Ctrl+Enter also sends a message from Telegram's composer, so it goes
+		# back to Telegram unless focus is on a message.
+		if not _telegramIsInForeground() or not _telegramModule.showMessageLinks():
+			_passGestureToApplication(gesture)

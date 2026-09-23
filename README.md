@@ -12,6 +12,7 @@ Telegram Desktop Accessibility is an NVDA add-on for Telegram Desktop on Windows
 
 * `Alt+1` moves focus to the selected chat in the chat list, or to the first chat when no chat is selected.
 * `Alt+M` opens Telegram's main menu.
+* `Ctrl+Enter` on a message opens its link, or lists them when the message has several. Only web, e-mail and Telegram links are offered; file paths in a message are never opened. Elsewhere, such as in the message composer, `Ctrl+Enter` reaches Telegram unchanged.
 * `Alt+Y`, `Alt+N`, `Alt+A` and `Alt+V` answer a call, decline or end it, mute or unmute the microphone, and turn the camera on or off. Each of them reports the action in Telegram's own wording, so it follows Telegram's display language.
 * Every command is listed in NVDA's Input Gestures dialog under "Telegram Desktop Accessibility", so any default shortcut can be reassigned or removed. Outside Telegram the assigned keystroke reaches the application unchanged.
 * Structural main-menu controls such as Profile and Accounts, unnamed composer controls, and the top-bar suggestion receive useful accessible labels. A real name supplied by Telegram is always preserved.
@@ -38,6 +39,7 @@ To use different keys, open NVDA menu > Preferences > Input Gestures, expand the
 | Shortcut | Provided by | Function |
 |---|---|---|
 | **Alt+1** | Add-on | Move focus to the chat list |
+| **Ctrl+Enter** | Add-on | Open the link in the focused message, or choose one of its links |
 | **Up / Down / Page Up / Page Down** | Telegram Desktop | Navigate within a chat |
 | **Shift+Scroll** | Telegram Desktop | Speed up in-chat navigation |
 | **Up / Left / Right / Down** | Telegram Desktop | Navigate suggested stickers |

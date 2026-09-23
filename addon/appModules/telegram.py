@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 from typing import Any, NamedTuple, cast
 
 import addonHandler
@@ -59,6 +61,40 @@ _MAX_SIBLING_STEPS = 32
 # so a focus event can never expand a meaningful part of Telegram's UIA tree.
 _MAX_SUGGESTION_TEXT_NODES = 24
 _MAX_SUGGESTION_TEXT_DEPTH = 4
+
+# Ctrl+Enter on a message lists the links in it. A message row is a list item
+# inside Telegram's history view; the class and AutomationId are stable across
+# display languages.
+_HISTORY_LIST_CLASS_NAME = "HistoryView::ListWidget"
+_HISTORY_INNER_CLASS_NAME = "HistoryInner"
+_MESSAGE_LIST_AUTOMATION_ID = "ChatsList"
+# One pass over the message text, so a span can only ever be one kind of link.
+# Only web, mail and Telegram links are recognised: a message is written by
+# someone else, so a file path or other scheme in it is never opened.
+_MESSAGE_LINK_PATTERN = re.compile(
+	r"(?P<uri>(?:(?:https?|tg)://|mailto:)[^\s<>\u200e\u200f]+)"
+	r"|(?P<www>www\.[^\s<>\u200e\u200f]+)"
+	r"|(?P<email>(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+)"
+	r"|(?P<domain>(?<![\w@.\\/-])(?:[\w-]+\.)+(?P<tld>[A-Za-z0-9]{2,24})"
+	r"(?P<domainRest>[/?#][^\s<>\u200e\u200f]*)?)",
+	re.IGNORECASE,
+)
+_OPENABLE_SCHEMES = ("http:", "https:", "mailto:", "tg:")
+_URL_TRAILING_PUNCTUATION = ".,;:!?\"'\u2026"
+_URL_PARTS = re.compile(r"^(?P<scheme>[A-Za-z][\w+.-]*:)(?P<slashes>//)?(?P<authority>[^/?#]*)(?P<rest>.*)$")
+# A scheme-less domain is only a link when Telegram would make it one. A path
+# settles it; otherwise the last label has to be a top-level domain rather than
+# a file extension, since "example.com" and "report.pdf" have the same shape.
+_COMMON_TLDS = frozenset(
+	"""
+	com net org edu gov mil int info biz name pro xyz online site shop store
+	tech blog cloud email live news work world dev app ai gg io co me tv cc
+	ru de uk fr it es pl nl br jp cn in ua ca au us be ch at se no fi dk cz
+	sk hu ro bg hr rs lt lv ee by kz vn th ph my sg nz za eg sa ae pk bd ng
+	ke tr kr mx ar id ir il gr pt ly to sh st is ie lu md ge am az uz kg
+	""".split(),
+)
+_messageLinksDialog: Any | None = None
 
 
 def _safeStringAttribute(obj: object, attribute: str) -> str:
@@ -974,3 +1010,184 @@ def toggleCallCamera() -> None:
 	"""Turn the camera on or off in Telegram's call."""
 	if not _pressCallButton(_telegramCallPanel().camera):
 		ui.message(_("Not in a call"))
+def isTelegramMessage(obj: object) -> bool:
+	"""Return True for a message row in Telegram's chat history."""
+	if _safeRole(obj) != controlTypes.Role.LISTITEM:
+		return False
+	ancestor = obj
+	seen: set[int] = set()
+	for _step in range(_MAX_UIA_PARENT_STEPS):
+		try:
+			ancestor = getattr(ancestor, "parent")
+		except Exception:
+			return False
+		if ancestor is None or id(ancestor) in seen:
+			return False
+		seen.add(id(ancestor))
+		if (
+			_safeStringAttribute(ancestor, "UIAAutomationId") == _MESSAGE_LIST_AUTOMATION_ID
+			or _normalizedClassName(ancestor) == _HISTORY_LIST_CLASS_NAME
+			or _automationIdContainsClass(ancestor, _HISTORY_INNER_CLASS_NAME)
+		):
+			return True
+	return False
+
+
+def _stripTrailingUrlPunctuation(value: str) -> str:
+	"""Remove sentence punctuation without damaging balanced URL brackets."""
+	value = value.rstrip(_URL_TRAILING_PUNCTUATION)
+	for opening, closing in (("(", ")"), ("[", "]"), ("{", "}")):
+		while value.endswith(closing) and value.count(closing) > value.count(opening):
+			value = value[:-1]
+	return value
+
+
+def _linkDedupKey(url: str) -> str:
+	"""Fold only the scheme and host, which are the case-insensitive parts.
+
+	Paths and query values are case-sensitive, so folding a whole URL would hide
+	``/User`` behind ``/user`` and drop a link the message really contains.
+	"""
+	parts = _URL_PARTS.match(url)
+	if parts is None:
+		return url
+	return "".join(
+		(parts["scheme"].casefold(), parts["slashes"] or "", parts["authority"].casefold(), parts["rest"]),
+	)
+
+
+def _linkFromMatch(match: re.Match[str]) -> str:
+	value = _stripTrailingUrlPunctuation(match.group(0))
+	if not value:
+		return ""
+	if match["uri"]:
+		return value
+	if match["www"]:
+		return f"https://{value}"
+	if match["email"]:
+		return f"mailto:{value}"
+	if match["domain"] and (match["domainRest"] or (match["tld"] or "").casefold() in _COMMON_TLDS):
+		return f"https://{value}"
+	return ""
+
+
+def linksFromMessageText(text: str) -> tuple[str, ...]:
+	"""Extract the unique web, mail and Telegram links in a message, in order."""
+	links: list[str] = []
+	seen: set[str] = set()
+	for match in _MESSAGE_LINK_PATTERN.finditer(text):
+		link = _linkFromMatch(match)
+		key = _linkDedupKey(link)
+		if link and key not in seen:
+			seen.add(key)
+			links.append(link)
+	return tuple(links)
+
+
+def _redactedLink(url: str) -> str:
+	"""Describe a link for the log without the secrets it may carry.
+
+	Password resets, signed downloads and OAuth callbacks keep credentials in
+	the path, query and fragment, and a URL can carry a user name and password
+	before its host. NVDA logs are shared to get help, so only the scheme and
+	host are recorded; ``mailto:`` is reduced to the scheme alone.
+	"""
+	parts = _URL_PARTS.match(url)
+	if parts is None:
+		return "<link>"
+	if not parts["slashes"]:
+		return parts["scheme"]
+	return f"{parts['scheme']}{parts['slashes']}{parts['authority'].rpartition('@')[2]}"
+
+
+def _openMessageLink(url: str) -> None:
+	"""Open a link through its Windows-registered handler."""
+	if not url.casefold().startswith(_OPENABLE_SCHEMES):
+		# linksFromMessageText only produces these schemes; refuse anything else.
+		ui.message(_("Unable to open link"))
+		return
+	log.debug("Telegram opening message link for %s", _redactedLink(url))
+	try:
+		os.startfile(url)
+	except Exception:
+		ui.message(_("Unable to open link"))
+
+
+def _showMessageLinksMenu(links: tuple[str, ...]) -> None:
+	"""Show a non-blocking NVDA-owned chooser listing the message's links."""
+	global _messageLinksDialog
+	try:
+		import gui
+		import wx
+
+		if _messageLinksDialog is not None:
+			_messageLinksDialog.Destroy()
+			_messageLinksDialog = None
+
+		gui.mainFrame.prePopup()
+		try:
+			dialog = wx.SingleChoiceDialog(
+				gui.mainFrame,
+				# Translators: The prompt of the dialog listing the links in a Telegram message.
+				_("Select a link to open"),
+				# Translators: The title of the dialog listing the links in a Telegram message.
+				_("Links in message"),
+				list(links),
+			)
+			_messageLinksDialog = dialog
+			dialog.SetSelection(0)
+			selectedIndex = 0
+
+			def onSelect(event: object) -> None:
+				nonlocal selectedIndex
+				selection = cast(Any, event).GetSelection()
+				if 0 <= selection < len(links):
+					selectedIndex = selection
+
+			def onOpen(event: object) -> None:
+				link = links[selectedIndex]
+				dialog.Close()
+				wx.CallAfter(_openMessageLink, link)
+
+			def onClose(event: object) -> None:
+				global _messageLinksDialog
+				if _messageLinksDialog is dialog:
+					_messageLinksDialog = None
+				cast(Any, event).Skip()
+
+			dialog.Bind(wx.EVT_LISTBOX, onSelect)
+			dialog.Bind(wx.EVT_BUTTON, onOpen, id=wx.ID_OK)
+			dialog.Bind(wx.EVT_CLOSE, onClose)
+			dialog.Show()
+			dialog.Raise()
+		finally:
+			gui.mainFrame.postPopup()
+	except Exception:
+		log.exception("Telegram link chooser failed to open")
+		# Translators: Reported when the list of links in a Telegram message cannot be shown.
+		ui.message(_("Unable to show links"))
+
+
+def showMessageLinks() -> bool:
+	"""Open or list the links in the focused message.
+
+	Returns False when focus is not on a message, so the caller can pass
+	Ctrl+Enter on to Telegram (it sends a message from the composer).
+	"""
+	focus = _focusObject()
+	if focus is None or not isTelegramMessage(focus):
+		return False
+	element = _uiaElement(focus)
+	text = _rawElementProperty(element, UIAHandler.UIA_NamePropertyId) if element is not None else None
+	if not isinstance(text, str) or not text:
+		text = _safeStringAttribute(focus, "name")
+	links = linksFromMessageText(text)
+	log.debug("Telegram message holds %d link(s)", len(links))
+	if not links:
+		# Translators: Reported when the focused Telegram message has no links.
+		ui.message(_("No links in this message"))
+	elif len(links) == 1:
+		_openMessageLink(links[0])
+	else:
+		_showMessageLinksMenu(links)
+	return True

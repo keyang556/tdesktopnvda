@@ -12,6 +12,7 @@ Telegram 电脑版 NVDA 无障碍附加组件适用于 Windows 版 Telegram Desk
 
 * `Alt+1` 将焦点移到会话列表中已选中的会话；没有选中项目时，则移到第一个会话。
 * `Alt+M` 打开 Telegram 主菜单。
+* 在消息上按 `Ctrl+Enter` 会打开其中的链接；如果有多个链接，则列出供选择。只提供网页、电子邮件和 Telegram 链接，消息中的文件路径永远不会被打开。在其他位置（例如消息输入框），`Ctrl+Enter` 会原样交给 Telegram。
 * `Alt+Y`、`Alt+N`、`Alt+A` 和 `Alt+V` 分别用于接听通话、拒接或挂断、开关麦克风，以及开关摄像头。每个命令都会用 Telegram 自己的措辞报出所执行的操作，因此会跟随 Telegram 的界面语言。
 * 所有命令都会列在 NVDA 的“输入手势”对话框中，归类于“Telegram Desktop Accessibility”，因此可以自行更改或移除默认快捷键。在 Telegram 以外的程序中，按键会原样传给该程序。
 * 主菜单的结构性控件（例如个人资料和账号）、未命名的输入栏控件，以及顶栏的建议项，都会获得可用的无障碍标签。Telegram 已提供的真实名称始终保留。
@@ -46,6 +47,7 @@ Telegram 电脑版 NVDA 无障碍附加组件适用于 Windows 版 Telegram Desk
 | 快捷键 | 提供者 | 功能 |
 |---|---|---|
 | **Alt+1** | 附加组件 | 将焦点移到会话列表 |
+| **Ctrl+Enter** | 附加组件 | 打开所选消息中的链接，或从其中的多个链接中选择一个 |
 | **上 / 下 / Page Up / Page Down** | Telegram Desktop | 在会话内导航 |
 | **Shift+滚动** | Telegram Desktop | 加速会话内导航 |
 | **上 / 左 / 右 / 下** | Telegram Desktop | 导航建议的贴纸 |

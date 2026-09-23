@@ -80,3 +80,21 @@ msgstr "Рекомендация Telegram"
 
 msgid "Dismiss suggestion"
 msgstr "Закрыть рекомендацию"
+
+msgid "Show links in the current message"
+msgstr "Показать ссылки в текущем сообщении"
+
+msgid "Select a link to open"
+msgstr "Выберите ссылку, которую нужно открыть"
+
+msgid "Links in message"
+msgstr "Ссылки в сообщении"
+
+msgid "Unable to open link"
+msgstr "Не удалось открыть ссылку"
+
+msgid "Unable to show links"
+msgstr "Не удалось показать ссылки"
+
+msgid "No links in this message"
+msgstr "В этом сообщении нет ссылок"
