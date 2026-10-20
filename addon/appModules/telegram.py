@@ -1153,7 +1153,9 @@ def _showMessageLinksMenu(links: tuple[str, ...]) -> None:
 				global _messageLinksDialog
 				if _messageLinksDialog is dialog:
 					_messageLinksDialog = None
-				cast(Any, event).Skip()
+				# Closing a modeless dialog only hides it; destroy it so each
+				# closed chooser does not keep its native window alive.
+				dialog.Destroy()
 
 			dialog.Bind(wx.EVT_LISTBOX, onSelect)
 			dialog.Bind(wx.EVT_BUTTON, onOpen, id=wx.ID_OK)
