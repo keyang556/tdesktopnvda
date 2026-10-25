@@ -58,6 +58,12 @@ def _loadGlobalPluginModule():
 	telegramModule.endCall = lambda: telegramModule.calls.append("end")
 	telegramModule.toggleCallMicrophone = lambda: telegramModule.calls.append("microphone")
 	telegramModule.toggleCallCamera = lambda: telegramModule.calls.append("camera")
+	# Returns whether focus was on a message; otherwise Ctrl+Enter goes back to Telegram.
+	telegramModule.focusIsOnMessage = True
+	telegramModule.showMessageLinks = lambda: (
+		telegramModule.calls.append("links"),
+		telegramModule.focusIsOnMessage,
+	)[1]
 	telegramModule._cleanTelegramControlName = lambda obj: setattr(obj, "name", "cleaned")
 
 	codeAddon = types.SimpleNamespace(
@@ -170,6 +176,39 @@ class TelegramGlobalPluginTests(unittest.TestCase):
 			"Answer the incoming call",
 		)
 		self.assertTrue(all(descriptions))
+
+	def test_message_links_command_is_bound_to_control_enter(self):
+		self.assertEqual(self.module.GlobalPlugin.script_showMessageLinks.gestures, ["kb:control+enter"])
+		self.assertEqual(
+			self.module.GlobalPlugin.script_showMessageLinks.__doc__,
+			"Show links in the current message",
+		)
+
+	def test_control_enter_on_a_message_is_handled_here(self):
+		gesture = _FakeGesture()
+
+		self.module.GlobalPlugin().script_showMessageLinks(gesture)
+
+		self.assertEqual(self.module._testTelegramModule.calls, ["links"])
+		self.assertEqual(gesture.sent, 0)
+
+	def test_control_enter_elsewhere_in_telegram_still_reaches_telegram(self):
+		self.module._testTelegramModule.focusIsOnMessage = False
+		gesture = _FakeGesture()
+
+		self.module.GlobalPlugin().script_showMessageLinks(gesture)
+
+		self.assertEqual(self.module._testTelegramModule.calls, ["links"])
+		self.assertEqual(gesture.sent, 1)
+
+	def test_control_enter_outside_telegram_is_not_touched(self):
+		self.module._testApi.foregroundObject = _FakeObject("notepad")
+		gesture = _FakeGesture()
+
+		self.module.GlobalPlugin().script_showMessageLinks(gesture)
+
+		self.assertEqual(self.module._testTelegramModule.calls, [])
+		self.assertEqual(gesture.sent, 1)
 
 	def test_commands_forward_to_this_addons_qualified_app_module(self):
 		plugin = self.module.GlobalPlugin()

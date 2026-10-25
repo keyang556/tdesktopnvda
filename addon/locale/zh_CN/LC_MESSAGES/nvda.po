@@ -80,3 +80,21 @@ msgstr "Telegram 建议"
 
 msgid "Dismiss suggestion"
 msgstr "关闭建议"
+
+msgid "Show links in the current message"
+msgstr "显示当前消息中的链接"
+
+msgid "Select a link to open"
+msgstr "选择要打开的链接"
+
+msgid "Links in message"
+msgstr "消息中的链接"
+
+msgid "Unable to open link"
+msgstr "无法打开链接"
+
+msgid "Unable to show links"
+msgstr "无法显示链接"
+
+msgid "No links in this message"
+msgstr "此消息中没有链接"

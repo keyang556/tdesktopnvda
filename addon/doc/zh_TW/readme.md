@@ -12,6 +12,7 @@ Telegram 電腦版 NVDA 無障礙附加元件適用於 Windows 版 Telegram Desk
 
 * `Alt+1` 將焦點移至聊天室清單中已選取的聊天室；沒有選取項目時，則移至第一個聊天室。
 * `Alt+M` 開啟 Telegram 主選單。
+* 在訊息上按 `Ctrl+Enter` 會開啟其中的連結；若有多個連結，則列出供選擇。只提供網頁、電子郵件和 Telegram 連結，訊息中的檔案路徑永遠不會被開啟。在其他位置（例如訊息輸入框），`Ctrl+Enter` 會原樣交給 Telegram。
 * `Alt+Y`、`Alt+N`、`Alt+A` 與 `Alt+V` 分別用來接聽通話、拒接或掛斷、開關麥克風，以及開關攝影機。每個指令都會以 Telegram 本身的用語報出所執行的動作，因此會跟隨 Telegram 的介面語言。
 * 所有指令都會列在 NVDA 的「輸入手勢」對話方塊中，歸類於「Telegram Desktop Accessibility」，因此可以自行變更或移除預設快速鍵。在 Telegram 以外的程式，按鍵會原封不動地傳給該程式。
 * 主選單的結構性控制項（例如個人資料與帳號）、未命名的輸入列控制項，以及頂端列的建議項目，都會取得可用的無障礙標籤。Telegram 已提供的真實名稱一律保留。
@@ -46,6 +47,7 @@ Telegram 電腦版 NVDA 無障礙附加元件適用於 Windows 版 Telegram Desk
 | 快速鍵 | 提供者 | 功能 |
 |---|---|---|
 | **Alt+1** | 附加元件 | 將焦點移至聊天室清單 |
+| **Ctrl+Enter** | 附加元件 | 開啟所選訊息中的連結，或從其中的多個連結中選擇一個 |
 | **上 / 下 / Page Up / Page Down** | Telegram Desktop | 在聊天室內導覽 |
 | **Shift+捲動** | Telegram Desktop | 加速聊天室內導覽 |
 | **上 / 左 / 右 / 下** | Telegram Desktop | 導覽建議的貼圖 |

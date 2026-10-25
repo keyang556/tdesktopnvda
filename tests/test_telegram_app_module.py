@@ -1216,5 +1216,93 @@ class TelegramAppModuleTests(unittest.TestCase):
 		)
 
 
+def _messageRow(name):
+	row = _FakeUIA(role=_Role.LISTITEM, name=name)
+	_FakeUIA(role=_Role.LIST, automationId="ChatsList", children=[row])
+	return row
+
+
+class TelegramMessageLinkTests(unittest.TestCase):
+	def setUp(self):
+		self.module = _loadTelegramModule()
+		self.opened = []
+		self.module.os = types.SimpleNamespace(startfile=self.opened.append)
+
+	def test_links_are_found_in_reading_order_without_trailing_punctuation(self):
+		links = self.module.linksFromMessageText(
+			"See https://example.com/Path?a=1. Mail me@test.org, visit www.nvda.org or example.com",
+		)
+
+		self.assertEqual(
+			links,
+			(
+				"https://example.com/Path?a=1",
+				"mailto:me@test.org",
+				"https://www.nvda.org",
+				"https://example.com",
+			),
+		)
+
+	def test_balanced_brackets_stay_part_of_the_link(self):
+		links = self.module.linksFromMessageText("(see https://en.wikipedia.org/wiki/Foo_(bar)).")
+
+		self.assertEqual(links, ("https://en.wikipedia.org/wiki/Foo_(bar)",))
+
+	def test_only_scheme_and_host_are_folded_when_removing_duplicates(self):
+		links = self.module.linksFromMessageText(
+			"https://Example.com/A https://example.com/A https://example.com/a",
+		)
+
+		self.assertEqual(links, ("https://Example.com/A", "https://example.com/a"))
+
+	def test_file_names_and_paths_are_never_links(self):
+		links = self.module.linksFromMessageText(
+			"report.pdf C:\\Windows\\notepad.exe file:///C:/tool.exe \\\\server\\share\\tool.exe ftp://host/x",
+		)
+
+		self.assertEqual(links, ())
+
+	def test_logged_links_keep_only_scheme_and_host(self):
+		self.assertEqual(
+			self.module._redactedLink("https://user:secret@host.example/reset?token=abc#f"),
+			"https://host.example",
+		)
+		self.assertEqual(self.module._redactedLink("mailto:someone@example.com"), "mailto:")
+
+	def test_other_schemes_are_refused_even_if_asked_to_open_them(self):
+		self.module._openMessageLink("file:///C:/tool.exe")
+
+		self.assertEqual(self.opened, [])
+		self.assertEqual(self.module._testUi.messages, ["Unable to open link"])
+
+	def test_outside_a_message_ctrl_enter_is_left_to_telegram(self):
+		self.module._testApi.focusObject = _FakeUIA(role=_Role.BUTTON, name="https://example.com")
+
+		self.assertFalse(self.module.showMessageLinks())
+		self.assertEqual(self.opened, [])
+
+	def test_a_single_link_opens_directly(self):
+		self.module._testApi.focusObject = _messageRow("Try https://example.com now")
+
+		self.assertTrue(self.module.showMessageLinks())
+		self.assertEqual(self.opened, ["https://example.com"])
+
+	def test_a_message_without_links_says_so(self):
+		self.module._testApi.focusObject = _messageRow("Just words, report.pdf")
+
+		self.assertTrue(self.module.showMessageLinks())
+		self.assertEqual(self.opened, [])
+		self.assertEqual(self.module._testUi.messages, ["No links in this message"])
+
+	def test_several_links_open_a_chooser(self):
+		self.module._testApi.focusObject = _messageRow("https://a.example/x and https://b.example/y")
+		shown = []
+		self.module._showMessageLinksMenu = shown.append
+
+		self.assertTrue(self.module.showMessageLinks())
+		self.assertEqual(shown, [("https://a.example/x", "https://b.example/y")])
+		self.assertEqual(self.opened, [])
+
+
 if __name__ == "__main__":
 	unittest.main()
