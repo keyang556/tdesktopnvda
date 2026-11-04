@@ -6,13 +6,14 @@
 
 ## Overview
 
-Telegram Desktop Accessibility is an NVDA add-on for Telegram Desktop on Windows. It adds direct navigation and call commands, and fills missing accessible names on known Telegram controls.
+Telegram Desktop Accessibility is an NVDA add-on for Telegram Desktop on Windows. It adds direct navigation and call commands, reads replies the way Unigram does, and fills missing accessible names on known Telegram controls.
 
 ## Features
 
 * `Alt+1` moves focus to the selected chat in the chat list, or to the first chat when no chat is selected.
 * `Alt+M` opens Telegram's main menu.
 * `Ctrl+Enter` on a message opens its link, or lists them when the message has several. Only web, e-mail and Telegram links are offered; file paths in a message are never opened. Elsewhere, such as in the message composer, `Ctrl+Enter` reaches Telegram unchanged.
+* Replies are read the way Unigram reads them: who the message replies to, then the reply itself. Telegram's line "In reply to Bob: " followed by the whole quoted message becomes "In reply to Bob". `Left Arrow` on a reply reads the quoted message, as in UnigramPlus. Telegram's own wording is kept, so this follows Telegram's display language. It can be turned off in NVDA's settings.
 * `Alt+Y`, `Alt+N`, `Alt+A` and `Alt+V` answer a call, decline or end it, mute or unmute the microphone, and turn the camera on or off. Each of them reports the action in Telegram's own wording, so it follows Telegram's display language.
 * Every command is listed in NVDA's Input Gestures dialog under "Telegram Desktop Accessibility", so any default shortcut can be reassigned or removed. Outside Telegram the assigned keystroke reaches the application unchanged.
 * Structural main-menu controls such as Profile and Accounts, unnamed composer controls, and the top-bar suggestion receive useful accessible labels. A real name supplied by Telegram is always preserved.
@@ -23,6 +24,8 @@ Telegram Desktop Accessibility is an NVDA add-on for Telegram Desktop on Windows
 ## Usage
 
 Install the add-on, restart NVDA when prompted, and use the add-on shortcuts from the main Telegram window. No configuration is required.
+
+To hear the quoted message in full whenever a reply is read, open NVDA menu > Preferences > Settings, choose the "Telegram Desktop Accessibility" category, and clear "Read replies without the quoted message". `Left Arrow` is then left to Telegram as well. Pressing `Left Arrow` on a message that is not a reply reports that it is not a reply. Everywhere else, such as in the message composer, `Left Arrow` works as usual.
 
 If `Alt+1` cannot find a chat list or the list is empty, NVDA reports that condition. If `Alt+M` is unavailable on the current Telegram screen, NVDA reports that the main menu is not available. The call commands report that there is no incoming call, or that you are not in a call, when the matching control is not on screen. A call runs in a window of its own, so the call commands also work while the main Telegram window is in front.
 
@@ -40,6 +43,7 @@ To use different keys, open NVDA menu > Preferences > Input Gestures, expand the
 |---|---|---|
 | **Alt+1** | Add-on | Move focus to the chat list |
 | **Ctrl+Enter** | Add-on | Open the link in the focused message, or choose one of its links |
+| **Left Arrow** | Add-on | Read the quoted message of the focused reply |
 | **Up / Down / Page Up / Page Down** | Telegram Desktop | Navigate within a chat |
 | **Shift+Scroll** | Telegram Desktop | Speed up in-chat navigation |
 | **Up / Left / Right / Down** | Telegram Desktop | Navigate suggested stickers |
@@ -146,6 +150,8 @@ To use different keys, open NVDA menu > Preferences > Input Gestures, expand the
 Telegram Desktop's patched Qt accessibility provider exposes RTTI-based UIA class names. The add-on identifies the chat list as `Dialogs::InnerWidget`, allowing it to work independently of the localized accessible name. The main menu command finds Telegram's native button by UIA point hit-testing near the top-left corner, supporting both `Dialogs::Widget` and folder-sidebar layouts, then falls back to the existing provider-side subtree query.
 
 Telegram's call panel builds every control as a `Ui::CallButton`, laid out as screen sharing, camera, cancel or decline, answer or hang up, microphone, add people. Only the camera and the microphone carry a device-selection corner button, so the add-on recognizes those two by that corner button and the remaining commands by their place in the row. No translated name is read to find a control; a name is only read back to report the action, because each button is named after what pressing it does.
+
+Telegram describes each message twice: as one name, a line for each part of the message, and as a row of cells, one per part, always in the same order: read state, sender, inline bot, the message replied to, forward source, media, text, delivery state, time. The reply line is the cell whose value is one of the opening lines of the name, comes after the sender or read state, and names someone before a colon, as Telegram's "In reply to {name}: {text}" does. No translated word is matched, so replies are found in any display language whose translation keeps that colon; where one does not, the reply is read in full as before. The message's own text is recognised as the cell just before the delivery state, and a link preview or location by a later cell that repeats it, so a colon in the message itself is not taken for a reply. A colon in a name can still mislead it, because the line alone does not show where such a name ends: a reply to someone whose name has a colon is read with the name cut at that colon, and a forwarded message whose source has a colon in its name can be read as a reply. `Left Arrow` always reads the whole line.
 
 A global plug-in owns every command and resolves this add-on's app module by its qualified owner, avoiding the shared `appModules/telegram.py` lookup when another add-on wins it. Defining the commands once, in a plug-in that is always running, is what keeps a single reassignable entry per command in NVDA's Input Gestures dialog; each command checks the foreground itself and passes its gesture on when Telegram is not in front.
 

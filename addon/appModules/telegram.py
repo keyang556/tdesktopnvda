@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import os
 import re
 from typing import Any, NamedTuple, cast
@@ -15,6 +16,7 @@ import addonHandler
 import api
 import appModuleHandler
 from comInterfaces.UIAutomationClient import IUIAutomationInvokePattern, tagPOINT
+import config
 import controlTypes
 from logHandler import log
 from NVDAObjects.UIA import UIA
@@ -81,6 +83,19 @@ _MESSAGE_LINK_PATTERN = re.compile(
 	re.IGNORECASE,
 )
 _OPENABLE_SCHEMES = ("http:", "https:", "mailto:", "tg:")
+
+#: This add-on's section of NVDA's configuration, registered by the global plug-in.
+CONFIG_SECTION = "telegramDesktop"
+OMIT_REPLY_QUOTE = "omitReplyQuote"
+CONFIG_SPEC = {
+	# Read a reply as who it answers, and leave the quoted message to Left Arrow.
+	OMIT_REPLY_QUOTE: "boolean(default=True)",
+}
+# Telegram words a reply line as "In reply to {name}: {text}". The colon after
+# the name, which its translations keep, is the only part of it relied on.
+_REPLY_NAME_END = re.compile(r"[:\uff1a]")
+# Telegram shortens a long media description with this ellipsis.
+_ELLIPSIS = "\u2026"
 _URL_TRAILING_PUNCTUATION = ".,;:!?\"'\u2026"
 _URL_PARTS = re.compile(r"^(?P<scheme>[A-Za-z][\w+.-]*:)(?P<slashes>//)?(?P<authority>[^/?#]*)(?P<rest>.*)$")
 # A scheme-less domain is only a link when Telegram would make it one. A path
@@ -226,7 +241,7 @@ def _cleanTelegramControlName(obj: object) -> None:
 	# filled, using the object's own class to avoid naming every menu ancestor.
 	if providerName:
 		# An NVDA overlay may have dropped the provider's useful cached name.
-		_setObjectName(obj, providerName)
+		_setObjectName(obj, _spokenMessageName(obj, providerName))
 		return
 	menuName = _MAIN_MENU_CLASS_NAMES.get(_ownClassName(obj, automationClasses))
 	if menuName is not None:
@@ -1030,6 +1045,163 @@ def isTelegramMessage(obj: object) -> bool:
 		if any(_automationIdContainsClass(ancestor, className) for className in _MESSAGE_LIST_CLASS_NAMES):
 			return True
 	return False
+
+
+def _isMessageRow(obj: object) -> bool:
+	"""Return True for a message row, judged from the row alone.
+
+	A row carries its list's AutomationId, so unlike ``isTelegramMessage`` this
+	needs no walk up the tree. It runs on every focus change and every Left
+	Arrow press in Telegram.
+	"""
+	return _safeRole(obj) == controlTypes.Role.LISTITEM and any(
+		_automationIdContainsClass(obj, className) for className in _MESSAGE_LIST_CLASS_NAMES
+	)
+
+
+def _omitReplyQuote() -> bool:
+	try:
+		return bool(config.conf[CONFIG_SECTION][OMIT_REPLY_QUOTE])
+	except Exception:
+		# The global plug-in registers the setting; without it, keep its default.
+		return True
+
+
+def _messageCellValues(element: Any) -> tuple[str, ...]:
+	"""Return the values of a message row's cells, in Telegram's column order.
+
+	Telegram describes each part of a message - read state, sender, the
+	message replied to, forward source, media, text, delivery state, time and
+	so on - in a cell of its own. The cells always come in that order, and a
+	message has only the cells for the parts it has. The cell names are
+	translated column titles, so only the values are read, in one provider
+	call.
+	"""
+	try:
+		client: Any = _uiaHandler().clientObject
+		cacheRequest = client.CreateCacheRequest()
+		cacheRequest.AddProperty(UIAHandler.UIA_ValueValuePropertyId)
+		found = _usableElement(
+			element.FindAllBuildCache(
+				UIAHandler.TreeScope_Children,
+				client.CreateTrueCondition(),
+				cacheRequest,
+			),
+		)
+		if found is None:
+			return ()
+		values: list[str] = []
+		for index in range(found.Length):
+			value = found.GetElement(index).GetCachedPropertyValue(UIAHandler.UIA_ValueValuePropertyId)
+			values.append(value if isinstance(value, str) else "")
+	except Exception:
+		# A cell missing from the middle would shift every later one.
+		return ()
+	return tuple(values)
+
+
+class _ReplyLine(NamedTuple):
+	"""Where Telegram's reply line sits in a message's name."""
+
+	start: int
+	end: int
+	#: Where the name of the person replied to ends and the quote begins.
+	quoteStart: int
+
+
+def _isMessageContent(cellValues: Sequence[str], index: int, lastLines: Sequence[str]) -> bool:
+	"""Return whether a cell describes the message itself rather than a header.
+
+	The text of a message is the cell just before its delivery state, which
+	opens Telegram's status line ("Received at 2:55 PM"), the last line of the
+	name or the one before its reactions. A link preview's text or a location
+	that takes a line of its own is described again by a later cell.
+	"""
+	value = cellValues[index]
+	following = cellValues[index + 1 :]
+	if following and any(line.startswith(f"{following[0]} ") for line in lastLines):
+		return True
+	return any(
+		later == value or (value.endswith(_ELLIPSIS) and later.startswith(value[: -len(_ELLIPSIS)]))
+		for later in following
+	)
+
+
+def _replyLine(name: str, cellValues: Sequence[str]) -> _ReplyLine | None:
+	"""Find the line in which Telegram quotes the message a reply answers.
+
+	Telegram's message name opens with a line for each of the read state, the
+	sender, the inline bot, the message replied to and the forward source, in
+	the order of their cells, and each of those lines is exactly its cell's
+	value. The reply line is found from that structure, never from its
+	translated wording: it is the first of those lines after the leading
+	sender or read state that names someone before a colon.
+	"""
+	lastLines = name.split("\n")[-2:]
+	position = 0
+	for index, value in enumerate(cellValues):
+		end = position + len(value)
+		if not value or not name.startswith(value, position) or name[end : end + 1] not in ("", "\n"):
+			# The header lines are over: media lines join several cells.
+			return None
+		# The first line is the sender of a received message, whose name may
+		# hold a colon of its own, or the read state of a sent one.
+		if index > 0 and not _isMessageContent(cellValues, index, lastLines):
+			separator = _REPLY_NAME_END.search(value, 1)
+			if separator is not None:
+				return _ReplyLine(position, end, position + separator.start())
+		position = end + 1
+	return None
+
+
+def _messageReplyLine(obj: object, name: str) -> _ReplyLine | None:
+	element = _uiaElement(obj)
+	if element is None or not name:
+		return None
+	return _replyLine(name, _messageCellValues(element))
+
+
+def _spokenMessageName(obj: object, name: str) -> str:
+	"""Read a reply as who it answers, like Unigram, when that is enabled.
+
+	Telegram reads the whole quoted message before the reply itself. Only
+	its "In reply to {name}" part is kept; Left Arrow reads the rest.
+	"""
+	if not _omitReplyQuote() or not _isMessageRow(obj):
+		return name
+	reply = _messageReplyLine(obj, name)
+	if reply is None:
+		return name
+	return name[: reply.start] + name[reply.start : reply.quoteStart].rstrip() + name[reply.end :]
+
+
+def canReportReplyQuote() -> bool:
+	"""Return whether Left Arrow belongs to this add-on rather than to NVDA.
+
+	Everywhere but on a message, Left Arrow moves the caret or a selection,
+	and NVDA's own handling of it must stay in place.
+	"""
+	focus = _focusObject()
+	return focus is not None and _omitReplyQuote() and _isMessageRow(focus)
+
+
+def reportReplyQuote() -> bool:
+	"""Read the quoted message of the focused reply, as Telegram words it.
+
+	Returns False when this behaviour is off or focus is not on a message, so
+	the caller can pass Left Arrow on to Telegram.
+	"""
+	if not canReportReplyQuote():
+		return False
+	focus = _focusObject()
+	name = _providerName(focus)
+	reply = _messageReplyLine(focus, name)
+	if reply is None:
+		# Translators: Reported when Left Arrow is pressed on a Telegram message that does not reply to another.
+		ui.message(_("Not a reply"))
+	else:
+		ui.message(name[reply.start : reply.end])
+	return True
 
 
 def _stripTrailingUrlPunctuation(value: str) -> str:

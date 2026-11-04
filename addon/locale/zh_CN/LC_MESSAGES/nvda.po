@@ -98,3 +98,12 @@ msgstr "无法显示链接"
 
 msgid "No links in this message"
 msgstr "此消息中没有链接"
+
+msgid "Read the quoted message of the current reply"
+msgstr "朗读当前回复所引用的消息"
+
+msgid "Not a reply"
+msgstr "这条消息不是回复"
+
+msgid "Read replies without the &quoted message (press Left Arrow to hear it)"
+msgstr "读取回复时省略引用的消息，按左方向键即可收听(&Q)"

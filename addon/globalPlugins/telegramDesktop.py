@@ -23,9 +23,14 @@ from typing import TYPE_CHECKING, cast
 
 import addonHandler
 import api
+import config
 import globalPluginHandler
+from gui import guiHelper
+from gui.settingsDialogs import NVDASettingsDialog, SettingsPanel
 from logHandler import log
+import scriptHandler
 from scriptHandler import script
+import wx
 
 
 if TYPE_CHECKING:
@@ -48,6 +53,12 @@ _telegramModule = importlib.reload(_telegramModule)
 
 #: The Input Gestures category these commands are grouped under.
 ADDON_SUMMARY: str = cast(str, _codeAddon.manifest["summary"])
+
+config.conf.spec[_telegramModule.CONFIG_SECTION] = _telegramModule.CONFIG_SPEC
+
+
+def _addonConfig() -> config.AggregatedSection:
+	return config.conf[_telegramModule.CONFIG_SECTION]
 
 
 def _normalizedAppModuleAttribute(appModule: object, name: str) -> str:
@@ -111,10 +122,67 @@ def _passGestureToApplication(gesture: "inputCore.InputGesture") -> None:
 		log.debugWarning("Telegram command could not pass its gesture through", exc_info=True)
 
 
+def _runNVDACommandInstead(plugin: object, gesture: "inputCore.InputGesture") -> None:
+	"""Run the command NVDA has for a gesture this plug-in gives up, or pass it on.
+
+	A gesture the user assigned in the Input Gestures dialog reaches this
+	plug-in without ``getScript`` being asked. Left Arrow is also NVDA's own
+	caret command, and sending the bare key would move the caret without NVDA
+	reading what it moved over, so NVDA's lookup is repeated without this
+	plug-in instead.
+	"""
+	try:
+		globalMapScripts = scriptHandler.getGlobalMapScripts(gesture)
+		for obj, filterFunc in scriptHandler._yieldObjectsForFindScript(gesture):  # pyright: ignore[reportPrivateUsage]
+			if obj is None or obj is plugin:
+				continue
+			func = scriptHandler._getObjScript(obj, gesture, globalMapScripts)  # pyright: ignore[reportPrivateUsage]
+			if filterFunc is not None:
+				func = filterFunc(func, obj, gesture)
+			if func:
+				func(gesture)
+				return
+	except Exception:
+		# NVDA's lookup is internal and may change; the bare key is the fallback.
+		log.debugWarning("Telegram could not find NVDA's own command for a gesture", exc_info=True)
+	_passGestureToApplication(gesture)
+
+
+class TelegramSettingsPanel(SettingsPanel):
+	"""This add-on's category in NVDA's Settings dialog."""
+
+	title = ADDON_SUMMARY
+
+	def makeSettings(self, settingsSizer: wx.BoxSizer) -> None:
+		helper = guiHelper.BoxSizerHelper(self, sizer=settingsSizer)
+		self.omitReplyQuoteCheckBox: wx.CheckBox = helper.addItem(
+			wx.CheckBox(
+				self,
+				# Translators: A setting in the Telegram Desktop Accessibility category of NVDA's Settings.
+				label=_("Read replies without the &quoted message (press Left Arrow to hear it)"),
+			),
+		)
+		self.omitReplyQuoteCheckBox.SetValue(_addonConfig()[_telegramModule.OMIT_REPLY_QUOTE])
+
+	def onSave(self) -> None:
+		_addonConfig()[_telegramModule.OMIT_REPLY_QUOTE] = self.omitReplyQuoteCheckBox.GetValue()
+
+
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	"""Own this add-on's commands so NVDA can reassign them at any time."""
 
 	scriptCategory = ADDON_SUMMARY
+
+	def __init__(self) -> None:
+		super().__init__()
+		NVDASettingsDialog.categoryClasses.append(TelegramSettingsPanel)
+
+	def terminate(self) -> None:
+		try:
+			NVDASettingsDialog.categoryClasses.remove(TelegramSettingsPanel)
+		except ValueError:
+			pass
+		super().terminate()
 
 	def getScript(self, gesture: "inputCore.InputGesture") -> object | None:
 		"""Only claim built-in gestures while Telegram Desktop is foreground.
@@ -127,7 +195,12 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		"""
 		if not _telegramIsInForeground():
 			return None
-		return super().getScript(gesture)
+		script = super().getScript(gesture)
+		if script == self.script_reportReplyQuote and not _telegramModule.canReportReplyQuote():
+			# Left Arrow moves the caret in the composer, where NVDA has to read
+			# what it moved over, so it is only claimed on a message.
+			return None
+		return script
 
 	def _cleanControlName(self, obj: object) -> None:
 		if _isTelegramObject(obj):
@@ -220,3 +293,14 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		# back to Telegram unless focus is on a message.
 		if not _telegramIsInForeground() or not _telegramModule.showMessageLinks():
 			_passGestureToApplication(gesture)
+
+	@script(
+		# Translators: The description of a command that reads the message a Telegram reply quotes.
+		description=_("Read the quoted message of the current reply"),
+		gesture="kb:leftArrow",
+	)
+	def script_reportReplyQuote(self, gesture: "inputCore.InputGesture") -> None:
+		# Telegram does nothing with Left Arrow on a message. Off a message, or
+		# with the setting off, the key is NVDA's again.
+		if not _telegramIsInForeground() or not _telegramModule.reportReplyQuote():
+			_runNVDACommandInstead(self, gesture)
