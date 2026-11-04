@@ -28,6 +28,7 @@ import globalPluginHandler
 from gui import guiHelper
 from gui.settingsDialogs import NVDASettingsDialog, SettingsPanel
 from logHandler import log
+import scriptHandler
 from scriptHandler import script
 import wx
 
@@ -119,6 +120,32 @@ def _passGestureToApplication(gesture: "inputCore.InputGesture") -> None:
 	except Exception:
 		# Only keyboard gestures can be sent on to the application.
 		log.debugWarning("Telegram command could not pass its gesture through", exc_info=True)
+
+
+def _runNVDACommandInstead(plugin: object, gesture: "inputCore.InputGesture") -> None:
+	"""Run the command NVDA has for a gesture this plug-in gives up, or pass it on.
+
+	A gesture the user assigned in the Input Gestures dialog reaches this
+	plug-in without ``getScript`` being asked. Left Arrow is also NVDA's own
+	caret command, and sending the bare key would move the caret without NVDA
+	reading what it moved over, so NVDA's lookup is repeated without this
+	plug-in instead.
+	"""
+	try:
+		globalMapScripts = scriptHandler.getGlobalMapScripts(gesture)
+		for obj, filterFunc in scriptHandler._yieldObjectsForFindScript(gesture):  # pyright: ignore[reportPrivateUsage]
+			if obj is None or obj is plugin:
+				continue
+			func = scriptHandler._getObjScript(obj, gesture, globalMapScripts)  # pyright: ignore[reportPrivateUsage]
+			if filterFunc is not None:
+				func = filterFunc(func, obj, gesture)
+			if func:
+				func(gesture)
+				return
+	except Exception:
+		# NVDA's lookup is internal and may change; the bare key is the fallback.
+		log.debugWarning("Telegram could not find NVDA's own command for a gesture", exc_info=True)
+	_passGestureToApplication(gesture)
 
 
 class TelegramSettingsPanel(SettingsPanel):
@@ -273,7 +300,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		gesture="kb:leftArrow",
 	)
 	def script_reportReplyQuote(self, gesture: "inputCore.InputGesture") -> None:
-		# Telegram does nothing with Left Arrow on a message, but the key goes
-		# back to it whenever the setting is off or focus is elsewhere.
+		# Telegram does nothing with Left Arrow on a message. Off a message, or
+		# with the setting off, the key is NVDA's again.
 		if not _telegramIsInForeground() or not _telegramModule.reportReplyQuote():
-			_passGestureToApplication(gesture)
+			_runNVDACommandInstead(self, gesture)

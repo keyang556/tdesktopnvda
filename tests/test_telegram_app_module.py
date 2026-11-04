@@ -1458,6 +1458,38 @@ class TelegramReplyReadingTests(unittest.TestCase):
 		self.assertTrue(self._leftArrow(row))
 		self.assertEqual(self.module._testUi.messages, ["In reply to Bob: first line\nsecond line"])
 
+	def test_a_colon_in_the_quote_does_not_cut_the_name(self):
+		row = _describedMessageRow(
+			"Alice\nIn reply to Bob: Meet at 10:30: room 2\nOK\nReceived at 2:55 PM",
+			[
+				("Sender", "Alice"),
+				("Reply", "In reply to Bob: Meet at 10:30: room 2"),
+				("Message", "OK"),
+				("Delivery", "Received"),
+				("Time", "at 2:55 PM"),
+			],
+		)
+
+		self.assertEqual(self._spokenName(row), "Alice\nIn reply to Bob\nOK\nReceived at 2:55 PM")
+
+	def test_left_arrow_reads_the_whole_line_when_the_name_has_a_colon(self):
+		# The line alone cannot tell where a name with a colon ends: the spoken
+		# name stops at its first colon, so Left Arrow must still give it all.
+		row = _describedMessageRow(
+			"Alice\nIn reply to Re: Bob: hello\nOK\nReceived at 2:55 PM",
+			[
+				("Sender", "Alice"),
+				("Reply", "In reply to Re: Bob: hello"),
+				("Message", "OK"),
+				("Delivery", "Received"),
+				("Time", "at 2:55 PM"),
+			],
+		)
+
+		self.assertEqual(self._spokenName(row), "Alice\nIn reply to Re\nOK\nReceived at 2:55 PM")
+		self.assertTrue(self._leftArrow(row))
+		self.assertEqual(self.module._testUi.messages, ["In reply to Re: Bob: hello"])
+
 	def test_a_reply_with_media_is_shortened(self):
 		row = _describedMessageRow(
 			"Alice\nIn reply to Bob: Where?\nPhoto, 1280x720\nReceived at 2:55 PM",

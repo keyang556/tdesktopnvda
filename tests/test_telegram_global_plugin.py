@@ -145,6 +145,14 @@ def _loadGlobalPluginModule():
 
 	scriptHandler = types.ModuleType("scriptHandler")
 	scriptHandler.script = fakeScript
+	# The objects NVDA's script lookup asks in turn, each with the command it
+	# would answer with; this plug-in is one of them.
+	scriptHandler.lookupOrder = []
+	scriptHandler.getGlobalMapScripts = lambda gesture: []
+	scriptHandler._yieldObjectsForFindScript = lambda gesture: (
+		(obj, None) for obj in scriptHandler.lookupOrder
+	)
+	scriptHandler._getObjScript = lambda obj, gesture, globalMapScripts: getattr(obj, "command", None)
 
 	importlibStub = types.ModuleType("importlib")
 	importlibStub.reload = lambda module: module
@@ -187,6 +195,7 @@ def _loadGlobalPluginModule():
 		assert spec.loader is not None
 		spec.loader.exec_module(module)
 		module._testApi = api
+		module._testScriptHandler = scriptHandler
 		module._testConfig = config
 		module._testSettingsDialog = settingsDialogs.NVDASettingsDialog
 		module._testTelegramModule = telegramModule
@@ -306,6 +315,42 @@ class TelegramGlobalPluginTests(unittest.TestCase):
 
 	def test_reassigned_left_arrow_still_reaches_telegram_off_a_message(self):
 		self.module._testTelegramModule.replyQuoteApplies = False
+		gesture = _FakeGesture()
+
+		self.module.GlobalPlugin().script_reportReplyQuote(gesture)
+
+		self.assertEqual(gesture.sent, 1)
+
+	def test_reassigned_left_arrow_off_a_message_runs_nvdas_own_command(self):
+		# A gesture assigned in the Input Gestures dialog skips getScript. In the
+		# composer, NVDA's caret command has to run so the character is read.
+		self.module._testTelegramModule.replyQuoteApplies = False
+		plugin = self.module.GlobalPlugin()
+		plugin.command = plugin.script_reportReplyQuote
+		ran = []
+		composer = types.SimpleNamespace(command=ran.append)
+		self.module._testScriptHandler.lookupOrder = [plugin, types.SimpleNamespace(), composer]
+		gesture = _FakeGesture()
+
+		plugin.script_reportReplyQuote(gesture)
+
+		self.assertEqual(ran, [gesture])
+		self.assertEqual(gesture.sent, 0)
+
+	def test_reassigned_left_arrow_outside_telegram_runs_nvdas_own_command(self):
+		self.module._testApi.foregroundObject = _FakeObject("notepad")
+		ran = []
+		self.module._testScriptHandler.lookupOrder = [types.SimpleNamespace(command=ran.append)]
+		gesture = _FakeGesture()
+
+		self.module.GlobalPlugin().script_reportReplyQuote(gesture)
+
+		self.assertEqual(ran, [gesture])
+		self.assertEqual(self.module._testTelegramModule.calls, [])
+
+	def test_left_arrow_is_sent_on_when_nvdas_lookup_fails(self):
+		self.module._testTelegramModule.replyQuoteApplies = False
+		self.module._testScriptHandler._yieldObjectsForFindScript = lambda gesture: 1 / 0
 		gesture = _FakeGesture()
 
 		self.module.GlobalPlugin().script_reportReplyQuote(gesture)
