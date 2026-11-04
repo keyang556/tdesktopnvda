@@ -63,11 +63,12 @@ _MAX_SUGGESTION_TEXT_NODES = 24
 _MAX_SUGGESTION_TEXT_DEPTH = 4
 
 # Ctrl+Enter on a message lists the links in it. A message row is a list item
-# inside Telegram's history view; the class and AutomationId are stable across
-# display languages.
-_HISTORY_LIST_CLASS_NAME = "HistoryView::ListWidget"
-_HISTORY_INNER_CLASS_NAME = "HistoryInner"
-_MESSAGE_LIST_AUTOMATION_ID = "ChatsList"
+# in one of Telegram's message lists: HistoryInner in the classic chat view, or
+# HistoryView::ListWidget in the chat view that Telegram 7.3.4 made the default
+# (and in its replies, scheduled and pinned sections). NVDA gives a UIA object
+# its AutomationId but no class name, so the list is recognised by its class in
+# Telegram's RTTI-based AutomationId chain, which no display language changes.
+_MESSAGE_LIST_CLASS_NAMES = ("HistoryView::ListWidget", "HistoryInner")
 # One pass over the message text, so a span can only ever be one kind of link.
 # Only web, mail and Telegram links are recognised: a message is written by
 # someone else, so a file path or other scheme in it is never opened.
@@ -1010,6 +1011,8 @@ def toggleCallCamera() -> None:
 	"""Turn the camera on or off in Telegram's call."""
 	if not _pressCallButton(_telegramCallPanel().camera):
 		ui.message(_("Not in a call"))
+
+
 def isTelegramMessage(obj: object) -> bool:
 	"""Return True for a message row in Telegram's chat history."""
 	if _safeRole(obj) != controlTypes.Role.LISTITEM:
@@ -1024,11 +1027,7 @@ def isTelegramMessage(obj: object) -> bool:
 		if ancestor is None or id(ancestor) in seen:
 			return False
 		seen.add(id(ancestor))
-		if (
-			_safeStringAttribute(ancestor, "UIAAutomationId") == _MESSAGE_LIST_AUTOMATION_ID
-			or _normalizedClassName(ancestor) == _HISTORY_LIST_CLASS_NAME
-			or _automationIdContainsClass(ancestor, _HISTORY_INNER_CLASS_NAME)
-		):
+		if any(_automationIdContainsClass(ancestor, className) for className in _MESSAGE_LIST_CLASS_NAMES):
 			return True
 	return False
 

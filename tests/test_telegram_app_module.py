@@ -1216,9 +1216,27 @@ class TelegramAppModuleTests(unittest.TestCase):
 		)
 
 
-def _messageRow(name):
-	row = _FakeUIA(role=_Role.LISTITEM, name=name)
-	_FakeUIA(role=_Role.LIST, automationId="ChatsList", children=[row])
+# AutomationIds as Telegram Desktop 7.3.4 exposes them. A row carries its list's
+# AutomationId, and NVDA gives neither of them a UIA class name, so these rows
+# have none either.
+_MAIN_WIDGET_ID = (
+	"class Core::Sandbox.class MainWindow.class Ui::RpWidget.class Ui::RpWidget.class MainWidget"
+)
+_CHAT_VIEW_LIST_ID = (
+	f"{_MAIN_WIDGET_ID}.class HistoryView::ChatWidget.class Ui::ElasticScroll.class HistoryView::ListWidget"
+)
+_CLASSIC_HISTORY_LIST_ID = (
+	f"{_MAIN_WIDGET_ID}.class HistoryWidget.class Ui::ScrollArea.qt_scrollarea_viewport.class HistoryInner"
+)
+_CHAT_LIST_ID = (
+	f"{_MAIN_WIDGET_ID}.class Dialogs::Widget.class Ui::ElasticScroll.class Ui::VerticalLayout"
+	".class Dialogs::InnerWidget"
+)
+
+
+def _messageRow(name, listId=_CHAT_VIEW_LIST_ID):
+	row = _FakeUIA(role=_Role.LISTITEM, name=name, automationId=listId)
+	_FakeUIA(role=_Role.LIST, automationId=listId, children=[row])
 	return row
 
 
@@ -1281,11 +1299,26 @@ class TelegramMessageLinkTests(unittest.TestCase):
 		self.assertFalse(self.module.showMessageLinks())
 		self.assertEqual(self.opened, [])
 
+	def test_a_chat_in_the_chat_list_is_not_a_message(self):
+		self.module._testApi.focusObject = _messageRow("Saved Messages\nhttps://example.com", _CHAT_LIST_ID)
+
+		self.assertFalse(self.module.showMessageLinks())
+		self.assertEqual(self.opened, [])
+
 	def test_a_single_link_opens_directly(self):
 		self.module._testApi.focusObject = _messageRow("Try https://example.com now")
 
 		self.assertTrue(self.module.showMessageLinks())
 		self.assertEqual(self.opened, ["https://example.com"])
+
+	def test_a_message_in_the_classic_chat_view_opens_its_link(self):
+		self.module._testApi.focusObject = _messageRow(
+			"Ken\nhttps://example.com/a\nReceived 2:55 PM",
+			_CLASSIC_HISTORY_LIST_ID,
+		)
+
+		self.assertTrue(self.module.showMessageLinks())
+		self.assertEqual(self.opened, ["https://example.com/a"])
 
 	def test_a_message_without_links_says_so(self):
 		self.module._testApi.focusObject = _messageRow("Just words, report.pdf")
