@@ -17,6 +17,7 @@ _CONTROL_TYPE = "controlType"
 _IS_OFFSCREEN = "isOffscreen"
 _IS_SELECTED = "isSelected"
 _NAME = "name"
+_VALUE = "value"
 
 _BUTTON_CONTROL = "buttonControl"
 _LIST_CONTROL = "listControl"
@@ -97,6 +98,12 @@ class _FakeClient:
 	def CompareElements(self, left, right):
 		return left is right
 
+	def CreateTrueCondition(self):
+		return _FakeCondition(lambda element: True)
+
+	def CreateCacheRequest(self):
+		return types.SimpleNamespace(AddProperty=lambda propertyId: None)
+
 
 class _FakeInvokePattern:
 	def __init__(self, element):
@@ -141,9 +148,11 @@ class _FakeUIA:
 		failQuery=False,
 		failAction=False,
 		failFocus=False,
+		value="",
 	):
 		self.role = role
 		self.name = name
+		self.value = value
 		self.providerName = name if providerName is None else providerName
 		self.UIAClassName = className
 		self.UIAAutomationId = automationId
@@ -185,6 +194,7 @@ class _FakeUIA:
 			_IS_OFFSCREEN: self.isOffscreen,
 			_IS_SELECTED: _State.SELECTED in self.states,
 			_NAME: self.providerName,
+			_VALUE: self.value,
 		}
 		return values.get(propertyId)
 
@@ -232,7 +242,13 @@ class _FakeUIA:
 			raise AssertionError(f"unexpected tree scope: {scope}")
 		return _FakeElementArray([node for node in nodes if condition.matches(node)])
 
+	def FindAllBuildCache(self, scope, condition, cacheRequest):
+		return self.FindAll(scope, condition)
+
 	def GetCurrentPropertyValue(self, propertyId):
+		return self.propertyValue(propertyId)
+
+	def GetCachedPropertyValue(self, propertyId):
 		return self.propertyValue(propertyId)
 
 	def GetCurrentPattern(self, patternId):
@@ -289,6 +305,7 @@ def _loadTelegramModule(*, injectTranslation=True):
 	uiaHandler.UIA_IsOffscreenPropertyId = _IS_OFFSCREEN
 	uiaHandler.UIA_SelectionItemIsSelectedPropertyId = _IS_SELECTED
 	uiaHandler.UIA_NamePropertyId = _NAME
+	uiaHandler.UIA_ValueValuePropertyId = _VALUE
 	uiaHandler.UIA_ButtonControlTypeId = _BUTTON_CONTROL
 	uiaHandler.UIA_ListControlTypeId = _LIST_CONTROL
 	uiaHandler.UIA_ListItemControlTypeId = _LIST_ITEM_CONTROL
@@ -303,6 +320,9 @@ def _loadTelegramModule(*, injectTranslation=True):
 		baseCacheRequest=object(),
 	)
 
+	config = types.ModuleType("config")
+	config.conf = {}
+
 	comInterfaces = types.ModuleType("comInterfaces")
 	uiaClient = types.ModuleType("comInterfaces.UIAutomationClient")
 	uiaClient.IUIAutomationInvokePattern = object
@@ -314,6 +334,7 @@ def _loadTelegramModule(*, injectTranslation=True):
 		"appModuleHandler": appModuleHandler,
 		"comInterfaces": comInterfaces,
 		"comInterfaces.UIAutomationClient": uiaClient,
+		"config": config,
 		"controlTypes": controlTypes,
 		"logHandler": logHandler,
 		"NVDAObjects": nvdaObjects,
@@ -331,6 +352,7 @@ def _loadTelegramModule(*, injectTranslation=True):
 		assert spec.loader is not None
 		spec.loader.exec_module(module)
 		module._testApi = api
+		module._testConfig = config
 		module._testUi = ui
 		return module
 	finally:
@@ -1335,6 +1357,226 @@ class TelegramMessageLinkTests(unittest.TestCase):
 		self.assertTrue(self.module.showMessageLinks())
 		self.assertEqual(shown, [("https://a.example/x", "https://b.example/y")])
 		self.assertEqual(self.opened, [])
+
+
+def _describedMessageRow(name, cells, listId=_CHAT_VIEW_LIST_ID):
+	"""Build a message row as history_inner_widget_accessibility.cpp describes it.
+
+	``name`` is the row's whole description, one line per part of the message,
+	and ``cells`` holds one (column title, value) pair per part, in Telegram's
+	column order. The column titles are translated, so the add-on never reads
+	them; these English ones only make the tests readable.
+	"""
+	row = _FakeUIA(
+		role=_Role.LISTITEM,
+		name=name,
+		automationId=listId,
+		children=[_FakeUIA(name=title, value=value) for title, value in cells],
+	)
+	_FakeUIA(role=_Role.LIST, automationId=listId, children=[row])
+	return row
+
+
+# A received reply, as Telegram describes it and its cells.
+_RECEIVED_REPLY_NAME = "Alice\nIn reply to Bob: Meet at 10:30?\nSounds good\nReceived at 2:55 PM"
+_RECEIVED_REPLY_CELLS = [
+	("Sender", "Alice"),
+	("Reply", "In reply to Bob: Meet at 10:30?"),
+	("Message", "Sounds good"),
+	("Delivery", "Received"),
+	("Time", "at 2:55 PM"),
+]
+
+
+class TelegramReplyReadingTests(unittest.TestCase):
+	def setUp(self):
+		self.module = _loadTelegramModule()
+
+	def _spokenName(self, row):
+		self.module.AppModule().event_gainFocus(row, lambda: None)
+		return row.name
+
+	def _leftArrow(self, row):
+		self.module._testApi.focusObject = row
+		return self.module.reportReplyQuote()
+
+	def test_a_reply_is_read_as_who_it_answers_without_the_quote(self):
+		row = _describedMessageRow(_RECEIVED_REPLY_NAME, _RECEIVED_REPLY_CELLS)
+
+		self.assertEqual(self._spokenName(row), "Alice\nIn reply to Bob\nSounds good\nReceived at 2:55 PM")
+
+	def test_left_arrow_reads_the_quote_in_telegrams_own_words(self):
+		self.assertTrue(self._leftArrow(_describedMessageRow(_RECEIVED_REPLY_NAME, _RECEIVED_REPLY_CELLS)))
+		self.assertEqual(self.module._testUi.messages, ["In reply to Bob: Meet at 10:30?"])
+
+	def test_the_reply_is_found_whatever_telegrams_display_language(self):
+		row = _describedMessageRow(
+			"愛麗絲\n回覆 小明：明天見\n好\n已接收 下午 2:55",
+			[
+				("傳送者", "愛麗絲"),
+				("回覆", "回覆 小明：明天見"),
+				("訊息", "好"),
+				("傳送狀態", "已接收"),
+				("時間", "下午 2:55"),
+			],
+		)
+
+		self.assertEqual(self._spokenName(row), "愛麗絲\n回覆 小明\n好\n已接收 下午 2:55")
+
+	def test_a_sent_reply_keeps_its_read_state_and_sender(self):
+		for readState in ("Seen", "Not seen"):
+			with self.subTest(readState=readState):
+				row = _describedMessageRow(
+					f"{readState}\nMe\nIn reply to Bob: Lunch?\nSure\nSent at 2:55 PM",
+					[
+						("Seen", readState),
+						("Sender", "Me"),
+						("Reply", "In reply to Bob: Lunch?"),
+						("Message", "Sure"),
+						("Delivery", "Sent"),
+						("Time", "at 2:55 PM"),
+					],
+				)
+
+				self.assertEqual(
+					self._spokenName(row), f"{readState}\nMe\nIn reply to Bob\nSure\nSent at 2:55 PM"
+				)
+
+	def test_a_quote_over_several_lines_is_left_out_whole(self):
+		row = _describedMessageRow(
+			"Alice\nIn reply to Bob: first line\nsecond line\nAgreed\nReceived at 2:55 PM",
+			[
+				("Sender", "Alice"),
+				("Reply", "In reply to Bob: first line\nsecond line"),
+				("Message", "Agreed"),
+				("Delivery", "Received"),
+				("Time", "at 2:55 PM"),
+			],
+		)
+
+		self.assertEqual(self._spokenName(row), "Alice\nIn reply to Bob\nAgreed\nReceived at 2:55 PM")
+		self.assertTrue(self._leftArrow(row))
+		self.assertEqual(self.module._testUi.messages, ["In reply to Bob: first line\nsecond line"])
+
+	def test_a_reply_with_media_is_shortened(self):
+		row = _describedMessageRow(
+			"Alice\nIn reply to Bob: Where?\nPhoto, 1280x720\nReceived at 2:55 PM",
+			[
+				("Sender", "Alice"),
+				("Reply", "In reply to Bob: Where?"),
+				("Media type", "Photo"),
+				("Dimensions", "1280x720"),
+				("Delivery", "Received"),
+				("Time", "at 2:55 PM"),
+			],
+		)
+
+		self.assertEqual(
+			self._spokenName(row), "Alice\nIn reply to Bob\nPhoto, 1280x720\nReceived at 2:55 PM"
+		)
+
+	def test_a_message_text_with_a_colon_is_not_a_reply(self):
+		row = _describedMessageRow(
+			"Alice\nNote: bring snacks\nReceived at 2:55 PM\nReactions: 👍",
+			[
+				("Sender", "Alice"),
+				("Message", "Note: bring snacks"),
+				("Delivery", "Received"),
+				("Time", "at 2:55 PM"),
+				("Reactions", "👍"),
+			],
+		)
+
+		self.assertEqual(
+			self._spokenName(row), "Alice\nNote: bring snacks\nReceived at 2:55 PM\nReactions: 👍"
+		)
+		self.assertTrue(self._leftArrow(row))
+		self.assertEqual(self.module._testUi.messages, ["Not a reply"])
+
+	def test_a_link_preview_is_not_a_reply(self):
+		# Telegram describes a message with a link preview twice: once as its
+		# media, on a line of its own, and again as its text.
+		name = (
+			"Alice\nRead: https://example.com\nExample: Example Domain\nRead: https://example.com"
+			"\nReceived at 2:55 PM"
+		)
+		row = _describedMessageRow(
+			name,
+			[
+				("Sender", "Alice"),
+				("Media type", "Read: https://example.com"),
+				("Message", "Read: https://example.com"),
+				("Delivery", "Received"),
+				("Time", "at 2:55 PM"),
+				("Web site", "Example"),
+				("Web title", "Example Domain"),
+			],
+		)
+
+		self.assertEqual(self._spokenName(row), name)
+
+	def test_a_sender_name_with_a_colon_is_not_a_reply(self):
+		name = "Re: Alice\nhello\nReceived at 2:55 PM"
+		row = _describedMessageRow(
+			name,
+			[("Sender", "Re: Alice"), ("Message", "hello"), ("Delivery", "Received"), ("Time", "at 2:55 PM")],
+		)
+
+		self.assertEqual(self._spokenName(row), name)
+
+	def test_a_forwarded_message_is_not_a_reply(self):
+		name = "Alice\nForwarded from News\nHeadline: rain\nReceived at 2:55 PM"
+		row = _describedMessageRow(
+			name,
+			[
+				("Sender", "Alice"),
+				("Forward", "Forwarded from News"),
+				("Message", "Headline: rain"),
+				("Delivery", "Received"),
+				("Time", "at 2:55 PM"),
+				("Forward date", "11/1/26 9:00 AM"),
+			],
+		)
+
+		self.assertEqual(self._spokenName(row), name)
+
+	def test_without_cells_the_message_is_read_in_full(self):
+		row = _describedMessageRow(_RECEIVED_REPLY_NAME, [])
+
+		self.assertEqual(self._spokenName(row), _RECEIVED_REPLY_NAME)
+
+	def test_turning_the_setting_off_restores_telegrams_reading(self):
+		self.module._testConfig.conf = {"telegramDesktop": {"omitReplyQuote": False}}
+		row = _describedMessageRow(_RECEIVED_REPLY_NAME, _RECEIVED_REPLY_CELLS)
+		self.module._testApi.focusObject = row
+
+		self.assertEqual(self._spokenName(row), _RECEIVED_REPLY_NAME)
+		self.assertFalse(self.module.canReportReplyQuote())
+		self.assertFalse(self.module.reportReplyQuote())
+		self.assertEqual(self.module._testUi.messages, [])
+
+	def test_left_arrow_is_left_to_nvda_away_from_messages(self):
+		for focus in (
+			_FakeUIA(role=_Role.BUTTON, name="Send"),
+			_messageRow("Saved Messages", _CHAT_LIST_ID),
+		):
+			with self.subTest(focus=focus.name):
+				self.module._testApi.focusObject = focus
+
+				self.assertFalse(self.module.canReportReplyQuote())
+				self.assertFalse(self.module.reportReplyQuote())
+
+	def test_left_arrow_works_in_the_classic_chat_view(self):
+		row = _describedMessageRow(_RECEIVED_REPLY_NAME, _RECEIVED_REPLY_CELLS, _CLASSIC_HISTORY_LIST_ID)
+
+		self.assertTrue(self._leftArrow(row))
+		self.assertEqual(self.module._testUi.messages, ["In reply to Bob: Meet at 10:30?"])
+
+	def test_a_chat_list_row_is_never_shortened(self):
+		name = "Bob\nAlice: In reply to Bob: hi"
+		row = _messageRow(name, _CHAT_LIST_ID)
+
+		self.assertEqual(self._spokenName(row), name)
 
 
 if __name__ == "__main__":

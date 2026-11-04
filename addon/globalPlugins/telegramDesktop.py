@@ -23,9 +23,13 @@ from typing import TYPE_CHECKING, cast
 
 import addonHandler
 import api
+import config
 import globalPluginHandler
+from gui import guiHelper
+from gui.settingsDialogs import NVDASettingsDialog, SettingsPanel
 from logHandler import log
 from scriptHandler import script
+import wx
 
 
 if TYPE_CHECKING:
@@ -48,6 +52,12 @@ _telegramModule = importlib.reload(_telegramModule)
 
 #: The Input Gestures category these commands are grouped under.
 ADDON_SUMMARY: str = cast(str, _codeAddon.manifest["summary"])
+
+config.conf.spec[_telegramModule.CONFIG_SECTION] = _telegramModule.CONFIG_SPEC
+
+
+def _addonConfig() -> config.AggregatedSection:
+	return config.conf[_telegramModule.CONFIG_SECTION]
 
 
 def _normalizedAppModuleAttribute(appModule: object, name: str) -> str:
@@ -111,10 +121,41 @@ def _passGestureToApplication(gesture: "inputCore.InputGesture") -> None:
 		log.debugWarning("Telegram command could not pass its gesture through", exc_info=True)
 
 
+class TelegramSettingsPanel(SettingsPanel):
+	"""This add-on's category in NVDA's Settings dialog."""
+
+	title = ADDON_SUMMARY
+
+	def makeSettings(self, settingsSizer: wx.BoxSizer) -> None:
+		helper = guiHelper.BoxSizerHelper(self, sizer=settingsSizer)
+		self.omitReplyQuoteCheckBox: wx.CheckBox = helper.addItem(
+			wx.CheckBox(
+				self,
+				# Translators: A setting in the Telegram Desktop Accessibility category of NVDA's Settings.
+				label=_("Read replies without the &quoted message (press Left Arrow to hear it)"),
+			),
+		)
+		self.omitReplyQuoteCheckBox.SetValue(_addonConfig()[_telegramModule.OMIT_REPLY_QUOTE])
+
+	def onSave(self) -> None:
+		_addonConfig()[_telegramModule.OMIT_REPLY_QUOTE] = self.omitReplyQuoteCheckBox.GetValue()
+
+
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	"""Own this add-on's commands so NVDA can reassign them at any time."""
 
 	scriptCategory = ADDON_SUMMARY
+
+	def __init__(self) -> None:
+		super().__init__()
+		NVDASettingsDialog.categoryClasses.append(TelegramSettingsPanel)
+
+	def terminate(self) -> None:
+		try:
+			NVDASettingsDialog.categoryClasses.remove(TelegramSettingsPanel)
+		except ValueError:
+			pass
+		super().terminate()
 
 	def getScript(self, gesture: "inputCore.InputGesture") -> object | None:
 		"""Only claim built-in gestures while Telegram Desktop is foreground.
@@ -127,7 +168,12 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		"""
 		if not _telegramIsInForeground():
 			return None
-		return super().getScript(gesture)
+		script = super().getScript(gesture)
+		if script == self.script_reportReplyQuote and not _telegramModule.canReportReplyQuote():
+			# Left Arrow moves the caret in the composer, where NVDA has to read
+			# what it moved over, so it is only claimed on a message.
+			return None
+		return script
 
 	def _cleanControlName(self, obj: object) -> None:
 		if _isTelegramObject(obj):
@@ -219,4 +265,15 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		# Ctrl+Enter also sends a message from Telegram's composer, so it goes
 		# back to Telegram unless focus is on a message.
 		if not _telegramIsInForeground() or not _telegramModule.showMessageLinks():
+			_passGestureToApplication(gesture)
+
+	@script(
+		# Translators: The description of a command that reads the message a Telegram reply quotes.
+		description=_("Read the quoted message of the current reply"),
+		gesture="kb:leftArrow",
+	)
+	def script_reportReplyQuote(self, gesture: "inputCore.InputGesture") -> None:
+		# Telegram does nothing with Left Arrow on a message, but the key goes
+		# back to it whenever the setting is off or focus is elsewhere.
+		if not _telegramIsInForeground() or not _telegramModule.reportReplyQuote():
 			_passGestureToApplication(gesture)

@@ -98,3 +98,12 @@ msgstr "無法顯示連結"
 
 msgid "No links in this message"
 msgstr "此訊息中沒有連結"
+
+msgid "Read the quoted message of the current reply"
+msgstr "讀出目前回覆所引用的訊息"
+
+msgid "Not a reply"
+msgstr "這則訊息不是回覆"
+
+msgid "Read replies without the &quoted message (press Left Arrow to hear it)"
+msgstr "讀取回覆時省略引用的訊息，按左方向鍵即可聽取(&Q)"

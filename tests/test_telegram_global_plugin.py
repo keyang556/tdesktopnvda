@@ -16,6 +16,42 @@ class _FakeGlobalPlugin:
 	def getScript(self, gesture):
 		return self._fallbackScript
 
+	def terminate(self):
+		pass
+
+
+class _FakeConfig(dict):
+	"""NVDA's configuration, holding the sections its spec describes."""
+
+	def __init__(self):
+		super().__init__()
+		self.spec = {}
+
+	def __missing__(self, section):
+		self[section] = {}
+		return self[section]
+
+
+class _FakeCheckBox:
+	def __init__(self, parent, label):
+		self.label = label
+		self.value = None
+
+	def SetValue(self, value):
+		self.value = value
+
+	def GetValue(self):
+		return self.value
+
+
+class _FakeSizerHelper:
+	def __init__(self, parent, sizer):
+		self.items = []
+
+	def addItem(self, item):
+		self.items.append(item)
+		return item
+
 
 class _FakeObject:
 	def __init__(
@@ -65,6 +101,16 @@ def _loadGlobalPluginModule():
 		telegramModule.focusIsOnMessage,
 	)[1]
 	telegramModule._cleanTelegramControlName = lambda obj: setattr(obj, "name", "cleaned")
+	telegramModule.CONFIG_SECTION = "telegramDesktop"
+	telegramModule.OMIT_REPLY_QUOTE = "omitReplyQuote"
+	telegramModule.CONFIG_SPEC = {"omitReplyQuote": "boolean(default=True)"}
+	# Whether focus is on a message and the reply setting is on, so Left Arrow is the add-on's.
+	telegramModule.replyQuoteApplies = True
+	telegramModule.canReportReplyQuote = lambda: telegramModule.replyQuoteApplies
+	telegramModule.reportReplyQuote = lambda: (
+		telegramModule.calls.append("quote"),
+		telegramModule.replyQuoteApplies,
+	)[1]
 
 	codeAddon = types.SimpleNamespace(
 		loadModule=lambda name: telegramModule,
@@ -103,13 +149,34 @@ def _loadGlobalPluginModule():
 	importlibStub = types.ModuleType("importlib")
 	importlibStub.reload = lambda module: module
 
+	config = types.ModuleType("config")
+	config.conf = _FakeConfig()
+
+	gui = types.ModuleType("gui")
+	guiHelper = types.ModuleType("gui.guiHelper")
+	guiHelper.BoxSizerHelper = _FakeSizerHelper
+	settingsDialogs = types.ModuleType("gui.settingsDialogs")
+	settingsDialogs.SettingsPanel = object
+	settingsDialogs.NVDASettingsDialog = types.SimpleNamespace(categoryClasses=[])
+	gui.guiHelper = guiHelper
+	gui.settingsDialogs = settingsDialogs
+
+	wx = types.ModuleType("wx")
+	wx.CheckBox = _FakeCheckBox
+	wx.BoxSizer = object
+
 	stubs = {
 		"addonHandler": addonHandler,
 		"api": api,
+		"config": config,
 		"globalPluginHandler": globalPluginHandler,
+		"gui": gui,
+		"gui.guiHelper": guiHelper,
+		"gui.settingsDialogs": settingsDialogs,
 		"importlib": importlibStub,
 		"logHandler": logHandler,
 		"scriptHandler": scriptHandler,
+		"wx": wx,
 	}
 	previous = {name: sys.modules.get(name) for name in stubs}
 	sys.modules.update(stubs)
@@ -120,6 +187,8 @@ def _loadGlobalPluginModule():
 		assert spec.loader is not None
 		spec.loader.exec_module(module)
 		module._testApi = api
+		module._testConfig = config
+		module._testSettingsDialog = settingsDialogs.NVDASettingsDialog
 		module._testTelegramModule = telegramModule
 		return module
 	finally:
@@ -209,6 +278,66 @@ class TelegramGlobalPluginTests(unittest.TestCase):
 
 		self.assertEqual(self.module._testTelegramModule.calls, [])
 		self.assertEqual(gesture.sent, 1)
+
+	def test_reply_quote_command_is_bound_to_left_arrow(self):
+		self.assertEqual(self.module.GlobalPlugin.script_reportReplyQuote.gestures, ["kb:leftArrow"])
+		self.assertEqual(
+			self.module.GlobalPlugin.script_reportReplyQuote.__doc__,
+			"Read the quoted message of the current reply",
+		)
+
+	def test_left_arrow_on_a_message_reads_the_quote(self):
+		gesture = _FakeGesture()
+
+		self.module.GlobalPlugin().script_reportReplyQuote(gesture)
+
+		self.assertEqual(self.module._testTelegramModule.calls, ["quote"])
+		self.assertEqual(gesture.sent, 0)
+
+	def test_left_arrow_is_claimed_only_on_a_message(self):
+		plugin = self.module.GlobalPlugin()
+		plugin._fallbackScript = plugin.script_reportReplyQuote
+
+		self.assertEqual(plugin.getScript(_FakeGesture()), plugin.script_reportReplyQuote)
+
+		# In the composer, NVDA has to keep reading what Left Arrow moves over.
+		self.module._testTelegramModule.replyQuoteApplies = False
+		self.assertIsNone(plugin.getScript(_FakeGesture()))
+
+	def test_reassigned_left_arrow_still_reaches_telegram_off_a_message(self):
+		self.module._testTelegramModule.replyQuoteApplies = False
+		gesture = _FakeGesture()
+
+		self.module.GlobalPlugin().script_reportReplyQuote(gesture)
+
+		self.assertEqual(gesture.sent, 1)
+
+	def test_reply_setting_is_registered_with_nvda(self):
+		self.assertEqual(
+			self.module._testConfig.conf.spec["telegramDesktop"],
+			{"omitReplyQuote": "boolean(default=True)"},
+		)
+
+	def test_settings_panel_is_offered_while_the_plugin_runs(self):
+		categories = self.module._testSettingsDialog.categoryClasses
+		plugin = self.module.GlobalPlugin()
+
+		self.assertIn(self.module.TelegramSettingsPanel, categories)
+		plugin.terminate()
+		self.assertNotIn(self.module.TelegramSettingsPanel, categories)
+
+	def test_settings_panel_shows_and_saves_the_reply_setting(self):
+		section = self.module._testConfig.conf["telegramDesktop"]
+		section["omitReplyQuote"] = True
+		panel = self.module.TelegramSettingsPanel()
+
+		panel.makeSettings(None)
+		self.assertTrue(panel.omitReplyQuoteCheckBox.GetValue())
+		panel.omitReplyQuoteCheckBox.SetValue(False)
+		panel.onSave()
+
+		self.assertIs(section["omitReplyQuote"], False)
+		self.assertEqual(self.module.TelegramSettingsPanel.title, ADDON_SUMMARY)
 
 	def test_commands_forward_to_this_addons_qualified_app_module(self):
 		plugin = self.module.GlobalPlugin()

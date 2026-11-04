@@ -98,3 +98,12 @@ msgstr "Не удалось показать ссылки"
 
 msgid "No links in this message"
 msgstr "В этом сообщении нет ссылок"
+
+msgid "Read the quoted message of the current reply"
+msgstr "Прочитать цитируемое сообщение текущего ответа"
+
+msgid "Not a reply"
+msgstr "Это сообщение не является ответом"
+
+msgid "Read replies without the &quoted message (press Left Arrow to hear it)"
+msgstr "Читать ответы без &цитируемого сообщения (нажмите стрелку влево, чтобы его услышать)"
